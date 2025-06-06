@@ -30,8 +30,8 @@ class ClassicalWillingManager(BaseWillingManager):
         if interested_rate > 0.4:
             current_willing += interested_rate - 0.3
 
-        if willing_info.is_mentioned_bot:
-            current_willing += 1 if current_willing < 1.0 else 0.05
+#        if willing_info.is_mentioned_bot:
+#            current_willing += 1 if current_willing < 1.0 else 0.05
 
         is_emoji_not_reply = False
         if willing_info.is_emoji:

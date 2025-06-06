@@ -238,7 +238,7 @@ class PersonInfoManager:
         old_name = await self.get_value(person_id, "person_name")
         old_reason = await self.get_value(person_id, "name_reason")
 
-        max_retries = 8
+        max_retries = 1
         current_try = 0
         existing_names_str = ""
         current_name_set = set(self.person_name_list.values())
@@ -270,9 +270,7 @@ class PersonInfoManager:
                 "reason": "理由"
             }"""
             response, (reasoning_content, model_name) = await self.qv_name_llm.generate_response_async(qv_name_prompt)
-            logger.trace(f"取名提示词：{qv_name_prompt}\n取名回复：{response}")
-            result = self._extract_json_from_text(response[0])
-
+            result = self._extract_json_from_text(response.replace('```json', '').replace('```', '').strip())
             if not result or not result.get("nickname"):
                 logger.error("生成的昵称为空或结果格式不正确，重试中...")
                 current_try += 1

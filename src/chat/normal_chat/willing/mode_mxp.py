@@ -46,12 +46,12 @@ class MxpWillingManager(BaseWillingManager):
         self.intention_decay_rate = 0.93  # 意愿衰减率
 
         self.number_of_message_storage = 12  # 消息存储数量
-        self.expected_replies_per_min = 3  # 每分钟预期回复数
-        self.basic_maximum_willing = 0.5  # 基础最大意愿值
+        self.expected_replies_per_min = 1  # 每分钟预期回复数
+        self.basic_maximum_willing = 0.1  # 基础最大意愿值
 
-        self.mention_willing_gain = 0.6  # 提及意愿增益
-        self.interest_willing_gain = 0.3  # 兴趣意愿增益
-        self.single_chat_gain = 0.12  # 单聊增益
+        self.mention_willing_gain = 0.1  # 提及意愿增益
+        self.interest_willing_gain = 0.1  # 兴趣意愿增益
+        self.single_chat_gain = 0.06  # 单聊增益
 
         self.fatigue_messages_triggered_num = self.expected_replies_per_min  # 疲劳消息触发数量(int)
         self.fatigue_coefficient = 1.0  # 疲劳系数
