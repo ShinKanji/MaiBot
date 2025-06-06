@@ -16,21 +16,31 @@ class ImpressionUpdateTask(AsyncTask):
     def __init__(self):
         super().__init__(
             task_name="impression_update",
-            wait_before_start=60,  # 启动后等待10秒
-            run_interval=600,  # 每1分钟运行一次
+            wait_before_start=5,  # 启动后等待10秒
+            run_interval=20,  # 每1分钟运行一次
         )
 
     async def run(self):
         try:
-            # 获取最近10分钟的消息
-            current_time = int(time.time())
-            start_time = current_time - 600  # 10分钟前
+            if random.random() < 0.1:
+                # 获取最近10分钟的消息
+                current_time = int(time.time())
+                start_time = current_time - 6000  # 10分钟前
+                # 取一个月内任意一个小时的时间段
+            else:
+                now = int(time.time())
+                # 30天前的时间戳
+                month_ago = now - 90 * 24 * 60 * 60
+                # 随机选择一个小时的起点
+                random_start = random.randint(month_ago, now - 3600)
+                start_time = random_start
+                current_time = random_start + 3600  # 一个小时后
 
             # 获取所有消息
-            messages = get_raw_msg_by_timestamp(timestamp_start=start_time, timestamp_end=current_time, limit=150)
+            messages = get_raw_msg_by_timestamp(timestamp_start=start_time, timestamp_end=current_time, limit=100)
 
             if not messages:
-                # logger.info("没有找到需要处理的消息")
+                logger.info("没有找到需要处理的消息")
                 return
 
             logger.info(f"获取到 {len(messages)} 条消息")

@@ -13,6 +13,7 @@ import os
 from src.common.database.database import db  # 确保 db 被导入用于 create_tables
 from src.common.database.database_model import LLMUsage  # 导入 LLMUsage 模型
 from src.config.config import global_config
+from src.common.tcp_connector import get_tcp_connector
 from rich.traceback import install
 
 install(extra_lines=3)
@@ -123,6 +124,8 @@ class LLMRequest:
         self.stream = model.get("stream", False)
         self.pri_in = model.get("pri_in", 0)
         self.pri_out = model.get("pri_out", 0)
+        self.max_tokens = model.get("max_tokens", global_config.model.model_max_output_length)
+        # print(f"max_tokens: {self.max_tokens}")
 
         # 获取数据库实例
         self._init_database()
@@ -243,6 +246,25 @@ class LLMRequest:
         if stream_mode:
             payload["stream"] = stream_mode
 
+        if self.temp != 0.7:
+            payload["temperature"] = self.temp
+
+        # 添加enable_thinking参数（如果不是默认值False）
+        if not self.enable_thinking:
+            payload["enable_thinking"] = False
+
+        if self.thinking_budget != 4096:
+            payload["thinking_budget"] = self.thinking_budget
+
+        if self.max_tokens:
+            payload["max_tokens"] = self.max_tokens
+
+        # if "max_tokens" not in payload and "max_completion_tokens" not in payload:
+        # payload["max_tokens"] = global_config.model.model_max_output_length
+        # 如果 payload 中依然存在 max_tokens 且需要转换，在这里进行再次检查
+        if self.model_name.lower() in self.MODELS_NEEDING_TRANSFORMATION and "max_tokens" in payload:
+            payload["max_completion_tokens"] = payload.pop("max_tokens")
+
         return {
             "policy": policy,
             "payload": payload,
@@ -290,7 +312,7 @@ class LLMRequest:
                 # 似乎是openai流式必须要的东西,不过阿里云的qwq-plus加了这个没有影响
                 if request_content["stream_mode"]:
                     headers["Accept"] = "text/event-stream"
-                async with aiohttp.ClientSession() as session:
+                async with aiohttp.ClientSession(connector=await get_tcp_connector()) as session:
                     async with session.post(
                         request_content["api_url"], headers=headers, json=request_content["payload"]
                     ) as response:
@@ -631,6 +653,7 @@ class LLMRequest:
             ]
         else:
             messages = [{"role": "user", "content": prompt}]
+
         payload = {
             "model": self.model_name,
             "messages": messages,
@@ -648,8 +671,11 @@ class LLMRequest:
         if self.thinking_budget != 4096:
             payload["thinking_budget"] = self.thinking_budget
 
-        if "max_tokens" not in payload and "max_completion_tokens" not in payload:
-            payload["max_tokens"] = global_config.model.model_max_output_length
+        if self.max_tokens:
+            payload["max_tokens"] = self.max_tokens
+
+        # if "max_tokens" not in payload and "max_completion_tokens" not in payload:
+        # payload["max_tokens"] = global_config.model.model_max_output_length
         # 如果 payload 中依然存在 max_tokens 且需要转换，在这里进行再次检查
         if self.model_name.lower() in self.MODELS_NEEDING_TRANSFORMATION and "max_tokens" in payload:
             payload["max_completion_tokens"] = payload.pop("max_tokens")
