@@ -53,6 +53,8 @@ class RelationshipConfig(ConfigBase):
     give_name: bool = False
     """是否给其他人取名"""
 
+    build_relationship_interval: int = 600
+    """构建关系间隔 单位秒，如果为0则不构建关系"""
 
 @dataclass
 class ChatConfig(ConfigBase):
@@ -411,6 +413,44 @@ class MaimMessageConfig(ConfigBase):
     auth_token: list[str] = field(default_factory=lambda: [])
     """认证令牌，用于API验证，为空则不启用验证"""
 
+
+@dataclass
+class LPMMKnowledgeConfig(ConfigBase):
+    """LPMM知识库配置类"""
+
+    enable: bool = True
+    """是否启用LPMM知识库"""
+
+    rag_synonym_search_top_k: int = 10
+    """RAG同义词搜索的Top K数量"""
+
+    rag_synonym_threshold: float = 0.8
+    """RAG同义词搜索的相似度阈值"""
+
+    info_extraction_workers: int = 3
+    """信息提取工作线程数"""
+
+    qa_relation_search_top_k: int = 10
+    """QA关系搜索的Top K数量"""
+
+    qa_relation_threshold: float = 0.75
+    """QA关系搜索的相似度阈值"""
+
+    qa_paragraph_search_top_k: int = 1000
+    """QA段落搜索的Top K数量"""
+
+    qa_paragraph_node_weight: float = 0.05
+    """QA段落节点权重"""
+
+    qa_ent_filter_top_k: int = 10
+    """QA实体过滤的Top K数量"""
+
+    qa_ppr_damping: float = 0.8
+    """QA PageRank阻尼系数"""
+
+    qa_res_top_k: int = 10
+    """QA最终结果的Top K数量"""
+    
 
 @dataclass
 class ModelConfig(ConfigBase):
