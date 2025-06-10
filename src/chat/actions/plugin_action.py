@@ -1,41 +1,42 @@
-import traceback
-from typing import Tuple, Dict, List, Any, Optional, Union, Type
+from typing import Tuple, Dict, Any, Optional
 from src.chat.actions.base_action import BaseAction, register_action, ActionActivationType, ChatMode  # noqa F401
-from src.chat.heart_flow.observation.chatting_observation import ChattingObservation
-from src.chat.focus_chat.hfc_utils import create_empty_anchor_message
 from src.common.logger_manager import get_logger
-from src.config.config import global_config
 import os
 import inspect
 import toml  # 导入 toml 库
 from abc import abstractmethod
 
-# 导入拆分后的API模块
-from src.chat.actions.plugin_api.message_api import MessageAPI
-from src.chat.actions.plugin_api.llm_api import LLMAPI
-from src.chat.actions.plugin_api.database_api import DatabaseAPI
-from src.chat.actions.plugin_api.config_api import ConfigAPI
-from src.chat.actions.plugin_api.utils_api import UtilsAPI
-from src.chat.actions.plugin_api.stream_api import StreamAPI
-from src.chat.actions.plugin_api.hearflow_api import HearflowAPI
+# 导入新插件系统的API模块
+from src.plugin_system.apis.message_api import MessageAPI
+from src.plugin_system.apis.llm_api import LLMAPI
+from src.plugin_system.apis.database_api import DatabaseAPI
+from src.plugin_system.apis.config_api import ConfigAPI
+from src.plugin_system.apis.utils_api import UtilsAPI
+from src.plugin_system.apis.stream_api import StreamAPI
+from src.plugin_system.apis.hearflow_api import HearflowAPI
 
 # 以下为类型注解需要
-from src.chat.message_receive.chat_stream import ChatStream # noqa
-from src.chat.focus_chat.expressors.default_expressor import DefaultExpressor # noqa
-from src.chat.focus_chat.replyer.default_replyer import DefaultReplyer # noqa
-from src.chat.focus_chat.info.obs_info import ObsInfo # noqa
+from src.chat.message_receive.chat_stream import ChatStream  # noqa
+from src.chat.focus_chat.expressors.default_expressor import DefaultExpressor  # noqa
+from src.chat.focus_chat.replyer.default_replyer import DefaultReplyer  # noqa
+from src.chat.focus_chat.info.obs_info import ObsInfo  # noqa
 
 logger = get_logger("plugin_action")
 
 
 class PluginAction(BaseAction, MessageAPI, LLMAPI, DatabaseAPI, ConfigAPI, UtilsAPI, StreamAPI, HearflowAPI):
-    """插件动作基类
+    """插件动作基类（旧版兼容）
 
     封装了主程序内部依赖，提供简化的API接口给插件开发者
+
+    ⚠️ 此类已弃用，建议使用新的插件系统：
+    - 新基类：src.plugin_system.base.BaseAction
+    - 新API：src.plugin_system.plugin_api
+    - 新注册：@register_component 装饰器
     """
 
     action_config_file_name: Optional[str] = None  # 插件可以覆盖此属性来指定配置文件名
-    
+
     # 默认激活类型设置，插件可以覆盖
     focus_activation_type = ActionActivationType.ALWAYS
     normal_activation_type = ActionActivationType.ALWAYS
@@ -43,7 +44,7 @@ class PluginAction(BaseAction, MessageAPI, LLMAPI, DatabaseAPI, ConfigAPI, Utils
     llm_judge_prompt: str = ""
     activation_keywords: list[str] = []
     keyword_case_sensitive: bool = False
-    
+
     # 默认模式启用设置 - 插件动作默认在所有模式下可用，插件可以覆盖
     mode_enable = ChatMode.ALL
 
