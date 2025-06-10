@@ -12,7 +12,6 @@ from src.chat.utils.timer_calculator import Timer  # <--- Import Timer
 from src.chat.emoji_system.emoji_manager import emoji_manager
 from src.chat.focus_chat.heartFC_sender import HeartFCSender
 from src.chat.utils.utils import process_llm_response
-from src.chat.utils.info_catcher import info_catcher_manager
 from src.chat.heart_flow.utils_chat import get_chat_type_and_target_info
 from src.chat.message_receive.chat_stream import ChatStream
 from src.chat.focus_chat.hfc_utils import parse_thinking_id_to_timestamp
@@ -140,6 +139,8 @@ class DefaultReplyer:
             # 处理文本部分
             # text_part = action_data.get("text", [])
             # if text_part:
+            sent_msg_list = []
+            
             with Timer("生成回复", cycle_timers):
                 # 可以保留原有的文本处理逻辑或进行适当调整
                 reply = await self.reply(
@@ -149,17 +150,6 @@ class DefaultReplyer:
                     reason=reasoning,
                     action_data=action_data,
                 )
-
-            with Timer("选择表情", cycle_timers):
-                emoji_keyword = action_data.get("emoji", "")
-                print(f"emoji_keyword: {emoji_keyword}")
-                if emoji_keyword:
-                    emoji_base64, _description, _emotion = await self._choose_emoji(emoji_keyword)
-                    # print(f"emoji_base64: {emoji_base64}")
-                    # print(f"emoji_description: {_description}")
-                    # print(f"emoji_emotion: {emotion}")
-                    if emoji_base64:
-                        reply.append(("emoji", emoji_base64))
 
             if reply:
                 with Timer("发送消息", cycle_timers):
@@ -249,8 +239,6 @@ class DefaultReplyer:
             # current_temp = float(global_config.model.normal["temp"]) * arousal_multiplier
             # self.express_model.params["temperature"] = current_temp  # 动态调整温度
 
-            # 2. 获取信息捕捉器
-            info_catcher = info_catcher_manager.get_info_catcher(thinking_id)
             
             reply_to = action_data.get("reply_to", "none")
             
@@ -296,10 +284,6 @@ class DefaultReplyer:
 
                     # logger.info(f"prompt: {prompt}")
                     logger.info(f"最终回复: {content}")
-
-                info_catcher.catch_after_llm_generated(
-                    prompt=prompt, response=content, reasoning_content=reasoning_content, model_name=model_name
-                )
 
             except Exception as llm_e:
                 # 精简报错信息

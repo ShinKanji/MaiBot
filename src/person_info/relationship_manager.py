@@ -125,7 +125,6 @@ class RelationshipManager:
         if not person_name or person_name == "none":
             return ""
         impression = await person_info_manager.get_value(person_id, "impression")
-        interaction = await person_info_manager.get_value(person_id, "interaction")
         points = await person_info_manager.get_value(person_id, "points") or []
         
         if isinstance(points, str):
@@ -141,11 +140,9 @@ class RelationshipManager:
         relation_prompt = f"'{person_name}' ，ta在{platform}上的昵称是{nickname_str}。"
         
 
-        if impression:
-            relation_prompt += f"你对ta的印象是：{impression}。"
-            
-        if interaction:
-            relation_prompt += f"你与ta的关系是：{interaction}。"
+        # if impression:
+            # relation_prompt += f"你对ta的印象是：{impression}。"
+
             
         if random_points:
             for point in random_points:
@@ -243,7 +240,7 @@ class RelationshipManager:
         prompt = f"""
 你的名字是{global_config.bot.nickname}，{global_config.bot.nickname}的别名是{alias_str}。
 请不要混淆你自己和{global_config.bot.nickname}和{person_name}。
-请你基于用户 {person_name}(昵称:{nickname}) 的最近发言，总结出其中是否有有关{person_name}的内容引起了你的兴趣，或者有什么需要你记忆的点。
+请你基于用户 {person_name}(昵称:{nickname}) 的最近发言，总结出其中是否有有关{person_name}的内容引起了你的兴趣，或者有什么需要你记忆的点，或者对你友好或者不友好的点。
 如果没有，就输出none
 
 {current_time}的聊天内容：
@@ -362,7 +359,7 @@ class RelationshipManager:
         else:
             current_points = points_list
 
-# 如果points超过30条，按权重随机选择多余的条目移动到forgotten_points
+# 如果points超过10条，按权重随机选择多余的条目移动到forgotten_points
         if len(current_points) > 10:
             # 获取现有forgotten_points
             forgotten_points = await person_info_manager.get_value(person_id, "forgotten_points") or []
@@ -397,7 +394,7 @@ class RelationshipManager:
                 # 计算保留概率（权重越高越可能保留）
                 keep_probability = weight / total_weight
                 
-                if len(remaining_points) < 30:
+                if len(remaining_points) < 10:
                     # 如果还没达到30条，直接保留
                     remaining_points.append(point)
                 else:
@@ -415,8 +412,8 @@ class RelationshipManager:
             current_points = remaining_points
             forgotten_points.extend(points_to_move)
             
-            # 检查forgotten_points是否达到100条
-            if len(forgotten_points) >= 5:
+            # 检查forgotten_points是否达到5条
+            if len(forgotten_points) >= 10:
                 # 构建压缩总结提示词
                 alias_str = ", ".join(global_config.bot.alias_names)
                 
@@ -436,23 +433,32 @@ class RelationshipManager:
 你的名字是{global_config.bot.nickname}，{global_config.bot.nickname}的别名是{alias_str}。
 请不要混淆你自己和{global_config.bot.nickname}和{person_name}。
 
-请根据以下历史记录，添加，修改，整合，原有的印象和关系，总结出对用户 {person_name}(昵称:{nickname})的信息。
+请根据你对ta过去的了解，和ta最近的行为，修改，整合，原有的了解，总结出对用户 {person_name}(昵称:{nickname})新的了解。
 
-你之前对他的印象和关系是：
-印象impression：{impression}
+了解可以包含性格，关系，感受，态度，你推测的ta的性别，年龄，外貌，身份，习惯，爱好，重要事件，重要经历等等内容。也可以包含其他点。
+关注友好和不友好的因素，不要忽略。
+请严格按照以下给出的信息，不要新增额外内容。
+
+你之前对他的了解是：
+{impression}
 
 你记得ta最近做的事：
 {points_text}
 
-请输出：impression:，对这个人的总体印象，你对ta的感觉，你们的交互方式，对方的性格特点，身份，外貌，年龄，性别，习惯，爱好等等内容
+请输出一段平文本，以陈诉自白的语气，输出你对{person_name}的了解，不要输出任何其他内容。
 """
                 # 调用LLM生成压缩总结
                 compressed_summary, _ = await self.relationship_llm.generate_response_async(prompt=compress_prompt)
                 
+                current_time = datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S")
+                compressed_summary = f"截至{current_time}，你对{person_name}的了解：{compressed_summary}"
+                
                 await person_info_manager.update_one_field(person_id, "impression", compressed_summary)
+                
+                forgotten_points = []
 
 
-            # 更新数据库
+            # 这句代码的作用是：将更新后的 forgotten_points（遗忘的记忆点）列表，序列化为 JSON 字符串后，写回到数据库中的 forgotten_points 字段
             await person_info_manager.update_one_field(person_id, "forgotten_points", json.dumps(forgotten_points, ensure_ascii=False, indent=None))
         
         # 更新数据库

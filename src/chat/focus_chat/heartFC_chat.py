@@ -51,7 +51,7 @@ PROCESSOR_CLASSES = {
     "ToolProcessor": (ToolProcessor, "tool_use_processor"),
     "WorkingMemoryProcessor": (WorkingMemoryProcessor, "working_memory_processor"),
     "SelfProcessor": (SelfProcessor, "self_identify_processor"),
-    "RelationshipProcessor": (RelationshipProcessor, "relationship_processor"),
+    "RelationshipProcessor": (RelationshipProcessor, "relation_processor"),
 }
 
 logger = get_logger("hfc")  # Logger Name Changed
@@ -108,10 +108,18 @@ class HeartFChatting:
         
         # 根据配置文件和默认规则确定启用的处理器
         config_processor_settings = global_config.focus_chat_processor
-        self.enabled_processor_names = [
-            proc_name for proc_name, (_proc_class, config_key) in PROCESSOR_CLASSES.items()
-            if not config_key or getattr(config_processor_settings, config_key, True)
-        ]
+        self.enabled_processor_names = []
+        
+        for proc_name, (_proc_class, config_key) in PROCESSOR_CLASSES.items():
+            # 对于关系处理器，需要同时检查两个配置项
+            if proc_name == "RelationshipProcessor":
+                if (global_config.relationship.enable_relationship and 
+                    getattr(config_processor_settings, config_key, True)):
+                    self.enabled_processor_names.append(proc_name)
+            else:
+                # 其他处理器的原有逻辑
+                if not config_key or getattr(config_processor_settings, config_key, True):
+                    self.enabled_processor_names.append(proc_name)
 
         # logger.info(f"{self.log_prefix} 将启用的处理器: {self.enabled_processor_names}")
         
@@ -441,31 +449,33 @@ class HeartFChatting:
                     "observations": self.observations,
                 }
 
-            with Timer("调整动作", cycle_timers):
-                # 处理特殊的观察
-                await self.action_modifier.modify_actions(observations=self.observations)
-                await self.action_observation.observe()
-                self.observations.append(self.action_observation)
+            # 根据配置决定是否并行执行调整动作、回忆和处理器阶段
 
-            # 根据配置决定是否并行执行回忆和处理器阶段
-            # print(global_config.focus_chat.parallel_processing)
-            if global_config.focus_chat.parallel_processing:
-                # 并行执行回忆和处理器阶段
-                with Timer("并行回忆和处理", cycle_timers):
-                    memory_task = asyncio.create_task(self.memory_activator.activate_memory(self.observations))
-                    processor_task = asyncio.create_task(self._process_processors(self.observations, []))
-
-                    # 等待两个任务完成
-                    running_memorys, (all_plan_info, processor_time_costs) = await asyncio.gather(
-                        memory_task, processor_task
+                # 并行执行调整动作、回忆和处理器阶段
+            with Timer("并行调整动作、处理", cycle_timers):
+                # 创建并行任务
+                async def modify_actions_task():                    
+                    # 调用完整的动作修改流程
+                    await self.action_modifier.modify_actions(
+                        observations=self.observations,
                     )
-            else:
-                # 串行执行
-                with Timer("回忆", cycle_timers):
-                    running_memorys = await self.memory_activator.activate_memory(self.observations)
+                    
+                    await self.action_observation.observe()
+                    self.observations.append(self.action_observation)
+                    return True
+                
+                # 创建三个并行任务
+                action_modify_task = asyncio.create_task(modify_actions_task())
+                memory_task = asyncio.create_task(self.memory_activator.activate_memory(self.observations))
+                processor_task = asyncio.create_task(self._process_processors(self.observations, []))
 
-                with Timer("执行 信息处理器", cycle_timers):
-                    all_plan_info, processor_time_costs = await self._process_processors(self.observations, running_memorys)
+                # 等待三个任务完成
+                _, running_memorys, (all_plan_info, processor_time_costs) = await asyncio.gather(
+                    action_modify_task, memory_task, processor_task
+                )
+
+
+
 
             loop_processor_info = {
                 "all_plan_info": all_plan_info,
