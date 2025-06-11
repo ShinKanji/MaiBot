@@ -105,7 +105,7 @@ class BasePlugin(ABC):
         if file_ext == ".toml":
             with open(config_file_path, "r", encoding="utf-8") as f:
                 self.config = toml.load(f) or {}
-            logger.info(f"{self.log_prefix} 配置已从 {config_file_path} 加载")
+            logger.debug(f"{self.log_prefix} 配置已从 {config_file_path} 加载")
         else:
             logger.warning(f"{self.log_prefix} 不支持的配置文件格式: {file_ext}，仅支持 .toml")
             self.config = {}
@@ -148,7 +148,7 @@ class BasePlugin(ABC):
 
         # 注册插件
         if component_registry.register_plugin(self.plugin_info):
-            logger.info(f"{self.log_prefix} 插件注册成功，包含 {len(registered_components)} 个组件")
+            logger.debug(f"{self.log_prefix} 插件注册成功，包含 {len(registered_components)} 个组件")
             return True
         else:
             logger.error(f"{self.log_prefix} 插件注册失败")
@@ -167,16 +167,26 @@ class BasePlugin(ABC):
         return True
 
     def get_config(self, key: str, default: Any = None) -> Any:
-        """获取插件配置值
+        """获取插件配置值，支持嵌套键访问
 
         Args:
-            key: 配置键名
+            key: 配置键名，支持嵌套访问如 "section.subsection.key"
             default: 默认值
 
         Returns:
             Any: 配置值或默认值
         """
-        return self.config.get(key, default)
+        # 支持嵌套键访问
+        keys = key.split(".")
+        current = self.config
+
+        for k in keys:
+            if isinstance(current, dict) and k in current:
+                current = current[k]
+            else:
+                return default
+
+        return current
 
 
 def register_plugin(cls):

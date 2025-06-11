@@ -33,7 +33,13 @@ class PluginAPI(MessageAPI, LLMAPI, DatabaseAPI, ConfigAPI, UtilsAPI, StreamAPI,
     """
 
     def __init__(
-        self, chat_stream=None, expressor=None, replyer=None, observations=None, log_prefix: str = "[PluginAPI]"
+        self,
+        chat_stream=None,
+        expressor=None,
+        replyer=None,
+        observations=None,
+        log_prefix: str = "[PluginAPI]",
+        plugin_config: dict = None,
     ):
         """
         初始化插件API
@@ -44,6 +50,7 @@ class PluginAPI(MessageAPI, LLMAPI, DatabaseAPI, ConfigAPI, UtilsAPI, StreamAPI,
             replyer: 回复器对象
             observations: 观察列表
             log_prefix: 日志前缀
+            plugin_config: 插件配置字典
         """
         # 存储依赖对象
         self._services = {
@@ -55,8 +62,14 @@ class PluginAPI(MessageAPI, LLMAPI, DatabaseAPI, ConfigAPI, UtilsAPI, StreamAPI,
 
         self.log_prefix = log_prefix
 
+        # 存储action上下文信息
+        self._action_context = {}
+
         # 调用所有父类的初始化
         super().__init__()
+
+        # 存储插件配置
+        self._plugin_config = plugin_config or {}
 
         logger.debug(f"{self.log_prefix} PluginAPI 初始化完成")
 
@@ -88,10 +101,26 @@ class PluginAPI(MessageAPI, LLMAPI, DatabaseAPI, ConfigAPI, UtilsAPI, StreamAPI,
         """检查是否有指定的服务对象"""
         return service_name in self._services and self._services[service_name] is not None
 
+    def set_action_context(self, thinking_id: str = None, shutting_down: bool = False, **kwargs):
+        """设置action上下文信息"""
+        if thinking_id:
+            self._action_context["thinking_id"] = thinking_id
+        self._action_context["shutting_down"] = shutting_down
+        self._action_context.update(kwargs)
+
+    def get_action_context(self, key: str, default=None):
+        """获取action上下文信息"""
+        return self._action_context.get(key, default)
+
 
 # 便捷的工厂函数
 def create_plugin_api(
-    chat_stream=None, expressor=None, replyer=None, observations=None, log_prefix: str = "[Plugin]"
+    chat_stream=None,
+    expressor=None,
+    replyer=None,
+    observations=None,
+    log_prefix: str = "[Plugin]",
+    plugin_config: dict = None,
 ) -> PluginAPI:
     """
     创建插件API实例的便捷函数
@@ -102,12 +131,18 @@ def create_plugin_api(
         replyer: 回复器对象
         observations: 观察列表
         log_prefix: 日志前缀
+        plugin_config: 插件配置字典
 
     Returns:
         PluginAPI: 配置好的插件API实例
     """
     return PluginAPI(
-        chat_stream=chat_stream, expressor=expressor, replyer=replyer, observations=observations, log_prefix=log_prefix
+        chat_stream=chat_stream,
+        expressor=expressor,
+        replyer=replyer,
+        observations=observations,
+        log_prefix=log_prefix,
+        plugin_config=plugin_config,
     )
 
 

@@ -70,7 +70,7 @@ class ComponentRegistry:
         elif component_type == ComponentType.COMMAND:
             self._register_command_component(component_info, component_class)
 
-        logger.info(f"已注册{component_type.value}组件: {component_name} ({component_class.__name__})")
+        logger.debug(f"已注册{component_type.value}组件: {component_name} ({component_class.__name__})")
         return True
 
     def _register_action_component(self, action_info: ActionInfo, action_class: Type):
@@ -141,14 +141,14 @@ class ComponentRegistry:
         info = self.get_component_info(command_name)
         return info if isinstance(info, CommandInfo) else None
 
-    def find_command_by_text(self, text: str) -> Optional[tuple[Type, dict]]:
+    def find_command_by_text(self, text: str) -> Optional[tuple[Type, dict, bool, str]]:
         """根据文本查找匹配的命令
 
         Args:
             text: 输入文本
 
         Returns:
-            Optional[tuple[Type, dict]]: (命令类, 匹配的命名组) 或 None
+            Optional[tuple[Type, dict, bool, str]]: (命令类, 匹配的命名组, 是否拦截消息, 插件名) 或 None
         """
         for pattern, command_class in self._command_patterns.items():
             match = pattern.match(text)
@@ -164,7 +164,12 @@ class ComponentRegistry:
                 if command_name:
                     command_info = self.get_command_info(command_name)
                     if command_info and command_info.enabled:
-                        return command_class, match.groupdict()
+                        return (
+                            command_class,
+                            match.groupdict(),
+                            command_info.intercept_message,
+                            command_info.plugin_name,
+                        )
         return None
 
     # === 插件管理方法 ===
@@ -185,7 +190,7 @@ class ComponentRegistry:
             return False
 
         self._plugins[plugin_name] = plugin_info
-        logger.info(f"已注册插件: {plugin_name} (组件数量: {len(plugin_info.components)})")
+        logger.debug(f"已注册插件: {plugin_name} (组件数量: {len(plugin_info.components)})")
         return True
 
     def get_plugin_info(self, plugin_name: str) -> Optional[PluginInfo]:
@@ -205,6 +210,21 @@ class ComponentRegistry:
         plugin_info = self.get_plugin_info(plugin_name)
         return plugin_info.components if plugin_info else []
 
+    def get_plugin_config(self, plugin_name: str) -> Optional[dict]:
+        """获取插件配置
+
+        Args:
+            plugin_name: 插件名称
+
+        Returns:
+            Optional[dict]: 插件配置字典或None
+        """
+        # 从插件管理器获取插件实例的配置
+        from src.plugin_system.core.plugin_manager import plugin_manager
+
+        plugin_instance = plugin_manager.get_plugin_instance(plugin_name)
+        return plugin_instance.config if plugin_instance else None
+
     # === 状态管理方法 ===
 
     def enable_component(self, component_name: str) -> bool:
@@ -215,7 +235,7 @@ class ComponentRegistry:
             component_info = self._components[component_name]
             if isinstance(component_info, ActionInfo):
                 self._default_actions[component_name] = component_info.description
-            logger.info(f"已启用组件: {component_name}")
+            logger.debug(f"已启用组件: {component_name}")
             return True
         return False
 
@@ -226,7 +246,7 @@ class ComponentRegistry:
             # 如果是Action，从默认动作集中移除
             if component_name in self._default_actions:
                 del self._default_actions[component_name]
-            logger.info(f"已禁用组件: {component_name}")
+            logger.debug(f"已禁用组件: {component_name}")
             return True
         return False
 
