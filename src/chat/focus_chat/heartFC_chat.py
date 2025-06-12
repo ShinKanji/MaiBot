@@ -4,10 +4,10 @@ import time
 import traceback
 from collections import deque
 from typing import List, Optional, Dict, Any, Deque, Callable, Awaitable
-from src.chat.message_receive.chat_stream import chat_manager
+from src.chat.message_receive.chat_stream import get_chat_manager
 from rich.traceback import install
 from src.chat.utils.prompt_builder import global_prompt_manager
-from src.common.logger_manager import get_logger
+from src.common.logger import get_logger
 from src.chat.utils.timer_calculator import Timer
 from src.chat.heart_flow.observation.observation import Observation
 from src.chat.focus_chat.heartFC_Cycleinfo import CycleDetail
@@ -97,8 +97,8 @@ class HeartFChatting:
         """
         # 基础属性
         self.stream_id: str = chat_id  # 聊天流ID
-        self.chat_stream = chat_manager.get_stream(self.stream_id)
-        self.log_prefix = f"[{chat_manager.get_stream_name(self.stream_id) or self.stream_id}]"
+        self.chat_stream = get_chat_manager().get_stream(self.stream_id)
+        self.log_prefix = f"[{get_chat_manager().get_stream_name(self.stream_id) or self.stream_id}]"
 
         self.memory_activator = MemoryActivator()
 
@@ -376,9 +376,7 @@ class HeartFChatting:
             if acquired and self._processing_lock.locked():
                 self._processing_lock.release()
 
-    async def _process_processors(
-        self, observations: List[Observation], running_memorys: List[Dict[str, Any]]
-    ) -> tuple[List[InfoBase], Dict[str, float]]:
+    async def _process_processors(self, observations: List[Observation]) -> tuple[List[InfoBase], Dict[str, float]]:
         # 记录并行任务开始时间
         parallel_start_time = time.time()
         logger.debug(f"{self.log_prefix} 开始信息处理器并行任务")
@@ -392,7 +390,7 @@ class HeartFChatting:
 
             async def run_with_timeout(proc=processor):
                 return await asyncio.wait_for(
-                    proc.process_info(observations=observations, running_memorys=running_memorys),
+                    proc.process_info(observations=observations),
                     timeout=global_config.focus_chat.processor_max_time,
                 )
 
@@ -479,7 +477,7 @@ class HeartFChatting:
                 # 创建三个并行任务
                 action_modify_task = asyncio.create_task(modify_actions_task())
                 memory_task = asyncio.create_task(self.memory_activator.activate_memory(self.observations))
-                processor_task = asyncio.create_task(self._process_processors(self.observations, []))
+                processor_task = asyncio.create_task(self._process_processors(self.observations))
 
                 # 等待三个任务完成
                 _, running_memorys, (all_plan_info, processor_time_costs) = await asyncio.gather(

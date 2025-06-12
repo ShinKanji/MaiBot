@@ -1,4 +1,4 @@
-from src.common.logger_manager import get_logger
+from src.common.logger import get_logger
 from src.common.database.database import db
 from src.common.database.database_model import PersonInfo  # 新增导入
 import copy
@@ -277,7 +277,7 @@ class PersonInfoManager:
         current_name_set = set(self.person_name_list.values())
 
         while current_try < max_retries:
-            # prompt_personality = individuality.get_prompt(x_person=2, level=1)
+            # prompt_personality =get_individuality().get_prompt(x_person=2, level=1)
             bot_name = global_config.bot.nickname
 
             qv_name_prompt = f"你是{bot_name}，一个伪装成人类的AI，你不能让别人发现这一点，"
@@ -459,7 +459,7 @@ class PersonInfoManager:
             if field_name not in PersonInfo._meta.fields:
                 if field_name in person_info_default:
                     result[field_name] = copy.deepcopy(person_info_default[field_name])
-                    logger.trace(f"字段'{field_name}'不在Peewee模型中，使用默认配置值。")
+                    logger.debug(f"字段'{field_name}'不在Peewee模型中，使用默认配置值。")
                 else:
                     logger.debug(f"get_values查询失败：字段'{field_name}'未在Peewee模型和默认配置中定义。")
                     result[field_name] = None
@@ -601,4 +601,11 @@ class PersonInfoManager:
         return None
 
 
-person_info_manager = PersonInfoManager()
+person_info_manager = None
+
+
+def get_person_info_manager():
+    global person_info_manager
+    if person_info_manager is None:
+        person_info_manager = PersonInfoManager()
+    return person_info_manager

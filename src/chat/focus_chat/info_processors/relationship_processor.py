@@ -4,20 +4,21 @@ from src.llm_models.utils_model import LLMRequest
 from src.config.config import global_config
 import time
 import traceback
-from src.common.logger_manager import get_logger
+from src.common.logger import get_logger
 from src.chat.utils.prompt_builder import Prompt, global_prompt_manager
-from src.chat.message_receive.chat_stream import chat_manager
-from src.person_info.relationship_manager import relationship_manager
+from src.chat.message_receive.chat_stream import get_chat_manager
+from src.person_info.relationship_manager import get_relationship_manager
 from .base_processor import BaseProcessor
-from typing import List, Optional
+from typing import List
 from typing import Dict
 from src.chat.focus_chat.info.info_base import InfoBase
 from src.chat.focus_chat.info.relation_info import RelationInfo
 from json_repair import repair_json
-from src.person_info.person_info import person_info_manager
+from src.person_info.person_info import get_person_info_manager
 import json
 import asyncio
 from src.chat.utils.chat_message_builder import get_raw_msg_by_timestamp_with_chat
+
 
 # 配置常量：是否启用小模型即时信息提取
 # 开启时：使用小模型并行即时提取，速度更快，但精度可能略低
@@ -110,12 +111,10 @@ class RelationshipProcessor(BaseProcessor):
                 request_type="focus.relationship.instant",
             )
 
-        name = chat_manager.get_stream_name(self.subheartflow_id)
+        name = get_chat_manager().get_stream_name(self.subheartflow_id)
         self.log_prefix = f"[{name}] "
 
-    async def process_info(
-        self, observations: Optional[List[Observation]] = None, running_memorys: Optional[List[Dict]] = None, *infos
-    ) -> List[InfoBase]:
+    async def process_info(self, observations: List[Observation] = None, *infos) -> List[InfoBase]:
         """处理信息对象
 
         Args:
@@ -137,7 +136,7 @@ class RelationshipProcessor(BaseProcessor):
 
     async def relation_identify(
         self,
-        observations: Optional[List[Observation]] = None,
+        observations: List[Observation] = None,
     ):
         """
         在回复前进行思考，生成内心想法并收集工具调用结果
@@ -241,6 +240,7 @@ class RelationshipProcessor(BaseProcessor):
                 instant_tasks = []
                 async_tasks = []
 
+                person_info_manager = get_person_info_manager()
                 for person_name, info_type in content_json.items():
                     person_id = person_info_manager.get_person_id_by_person_name(person_name)
                     if person_id:
@@ -366,6 +366,7 @@ class RelationshipProcessor(BaseProcessor):
         """
         使用小模型提取单个信息类型
         """
+        person_info_manager = get_person_info_manager()
         nickname_str = ",".join(global_config.bot.alias_names)
         name_block = f"你的名字是{global_config.bot.nickname},你的昵称有{nickname_str}，有人也会用这些昵称称呼你。"
 
@@ -453,6 +454,7 @@ class RelationshipProcessor(BaseProcessor):
         nickname_str = ",".join(global_config.bot.alias_names)
         name_block = f"你的名字是{global_config.bot.nickname},你的昵称有{nickname_str}，有人也会用这些昵称称呼你。"
 
+        person_info_manager = get_person_info_manager()
         person_name = await person_info_manager.get_value(person_id, "person_name")
 
         info_type_str = ""
@@ -534,6 +536,7 @@ class RelationshipProcessor(BaseProcessor):
             impression_messages = get_raw_msg_by_timestamp_with_chat(chat_id, start_time, end_time)
             if impression_messages:
                 logger.info(f"为 {person_id} 获取到 {len(impression_messages)} 条消息用于印象更新。")
+                relationship_manager = get_relationship_manager()
                 await relationship_manager.update_person_impression(
                     person_id=person_id, timestamp=end_time, bot_engaged_messages=impression_messages
                 )

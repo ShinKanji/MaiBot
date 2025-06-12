@@ -14,7 +14,7 @@ import difflib
 from src.chat.message_receive.message import MessageRecv  # 添加 MessageRecv 导入
 from src.chat.heart_flow.observation.observation import Observation
 
-from src.common.logger_manager import get_logger
+from src.common.logger import get_logger
 from src.chat.heart_flow.utils_chat import get_chat_type_and_target_info
 from src.chat.utils.prompt_builder import Prompt
 
@@ -287,7 +287,7 @@ class ChattingObservation(Observation):
 
         # print(f"构建中：self.person_list: {self.person_list}")
 
-        logger.trace(
+        logger.debug(
             f"Chat {self.chat_id} - 压缩早期记忆：{self.mid_memory_info}\n现在聊天内容：{self.talking_message_str}"
         )
 
