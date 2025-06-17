@@ -43,6 +43,7 @@ person_info_default = {
     # "user_cardname": None, # This field is not in Peewee model PersonInfo
     # "user_avatar": None,   # This field is not in Peewee model PersonInfo
     "impression": None,  # Corrected from persion_impression
+    "short_impression": None,
     "info_list": None,
     "points": None,
     "forgotten_points": None,
@@ -163,7 +164,7 @@ class PersonInfoManager:
             logger.debug(f"更新'{field_name}'失败，未在 PersonInfo Peewee 模型中定义的字段。")
             return
 
-        print(f"更新字段: {field_name}，值: {value}")
+        # print(f"更新字段: {field_name}，值: {value}")
 
         processed_value = value
         if field_name in JSON_SERIALIZED_FIELDS:

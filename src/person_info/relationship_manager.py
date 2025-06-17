@@ -11,7 +11,6 @@ import json
 from json_repair import repair_json
 from datetime import datetime
 from difflib import SequenceMatcher
-import ast
 import jieba
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
@@ -124,31 +123,14 @@ class RelationshipManager:
         person_name = await person_info_manager.get_value(person_id, "person_name")
         if not person_name or person_name == "none":
             return ""
-        # impression = await person_info_manager.get_value(person_id, "impression")
-        points = await person_info_manager.get_value(person_id, "points") or []
-
-        if isinstance(points, str):
-            try:
-                points = ast.literal_eval(points)
-            except (SyntaxError, ValueError):
-                points = []
-
-        random_points = random.sample(points, min(5, len(points))) if points else []
+        short_impression = await person_info_manager.get_value(person_id, "short_impression")
 
         nickname_str = await person_info_manager.get_value(person_id, "nickname")
         platform = await person_info_manager.get_value(person_id, "platform")
         relation_prompt = f"'{person_name}' ，ta在{platform}上的昵称是{nickname_str}。"
 
-        # if impression:
-        # relation_prompt += f"你对ta的印象是：{impression}。"
-
-        if random_points:
-            for point in random_points:
-                # print(f"point: {point}")
-                # print(f"point[2]: {point[2]}")
-                # print(f"point[0]: {point[0]}")
-                point_str = f"时间：{point[2]}。内容：{point[0]}"
-            relation_prompt += f"你记得{person_name}最近的点是：{point_str}。"
+        if short_impression:
+            relation_prompt += f"你对ta的印象是：{short_impression}。"
 
         return relation_prompt
 
@@ -226,6 +208,9 @@ class RelationshipManager:
 
         readable_messages = self.build_focus_readable_messages(messages=user_messages, target_person_id=person_id)
 
+        if not readable_messages:
+            return
+
         for original_name, mapped_name in name_mapping.items():
             # print(f"original_name: {original_name}, mapped_name: {mapped_name}")
             readable_messages = readable_messages.replace(f"{original_name}", f"{mapped_name}")
@@ -273,8 +258,8 @@ class RelationshipManager:
         for original_name, mapped_name in name_mapping.items():
             points = points.replace(mapped_name, original_name)
 
-        # logger.info(f"prompt: {prompt}")
-        # logger.info(f"points: {points}")
+        logger.info(f"prompt: {prompt}")
+        logger.info(f"points: {points}")
 
         if not points:
             logger.warning(f"未能从LLM获取 {person_name} 的新印象")
@@ -448,6 +433,28 @@ class RelationshipManager:
 
                 await person_info_manager.update_one_field(person_id, "impression", compressed_summary)
 
+                compress_short_prompt = f"""
+你的名字是{global_config.bot.nickname}，{global_config.bot.nickname}的别名是{alias_str}。
+请不要混淆你自己和{global_config.bot.nickname}和{person_name}。
+
+你对{person_name}的了解是：
+{compressed_summary}
+
+请你用一句话概括你对{person_name}的了解。突出:
+1.对{person_name}的直观印象
+2.{global_config.bot.nickname}与{person_name}的关系
+3.{person_name}的关键信息
+请输出一段平文本，以陈诉自白的语气，输出你对{person_name}的概括，不要输出任何其他内容。
+"""
+                compressed_short_summary, _ = await self.relationship_llm.generate_response_async(
+                    prompt=compress_short_prompt
+                )
+
+                # current_time = datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S")
+                # compressed_short_summary = f"截至{current_time}，你对{person_name}的了解：{compressed_short_summary}"
+
+                await person_info_manager.update_one_field(person_id, "short_impression", compressed_short_summary)
+
                 forgotten_points = []
 
             # 这句代码的作用是：将更新后的 forgotten_points（遗忘的记忆点）列表，序列化为 JSON 字符串后，写回到数据库中的 forgotten_points 字段
@@ -461,65 +468,22 @@ class RelationshipManager:
         )
         know_times = await person_info_manager.get_value(person_id, "know_times") or 0
         await person_info_manager.update_one_field(person_id, "know_times", know_times + 1)
+        know_since = await person_info_manager.get_value(person_id, "know_since") or 0
+        if know_since == 0:
+            await person_info_manager.update_one_field(person_id, "know_since", timestamp)
         await person_info_manager.update_one_field(person_id, "last_know", timestamp)
 
         logger.info(f"印象更新完成 for {person_name}")
 
     def build_focus_readable_messages(self, messages: list, target_person_id: str = None) -> str:
-        """格式化消息，只保留目标用户和bot消息附近的内容"""
-        # 找到目标用户和bot的消息索引
-        target_indices = []
-        for i, msg in enumerate(messages):
-            user_id = msg.get("user_id")
-            platform = msg.get("chat_info_platform")
-            person_id = PersonInfoManager.get_person_id(platform, user_id)
-            if person_id == target_person_id:
-                target_indices.append(i)
-
-        if not target_indices:
+        """格式化消息，处理所有消息内容"""
+        if not messages:
             return ""
 
-        # 获取需要保留的消息索引
-        keep_indices = set()
-        for idx in target_indices:
-            # 获取前后5条消息的索引
-            start_idx = max(0, idx - 5)
-            end_idx = min(len(messages), idx + 6)
-            keep_indices.update(range(start_idx, end_idx))
-
-        print(keep_indices)
-
-        # 将索引排序
-        keep_indices = sorted(list(keep_indices))
-
-        # 按顺序构建消息组
-        message_groups = []
-        current_group = []
-
-        for i in range(len(messages)):
-            if i in keep_indices:
-                current_group.append(messages[i])
-            elif current_group:
-                # 如果当前组不为空，且遇到不保留的消息，则结束当前组
-                if current_group:
-                    message_groups.append(current_group)
-                    current_group = []
-
-        # 添加最后一组
-        if current_group:
-            message_groups.append(current_group)
-
-        # 构建最终的消息文本
-        result = []
-        for i, group in enumerate(message_groups):
-            if i > 0:
-                result.append("...")
-            group_text = build_readable_messages(
-                messages=group, replace_bot_name=True, timestamp_mode="normal_no_YMD", truncate=False
-            )
-            result.append(group_text)
-
-        return "\n".join(result)
+        # 直接处理所有消息，不进行过滤
+        return build_readable_messages(
+            messages=messages, replace_bot_name=True, timestamp_mode="normal_no_YMD", truncate=False
+        )
 
     def calculate_time_weight(self, point_time: str, current_time: str) -> float:
         """计算基于时间的权重系数"""
@@ -542,7 +506,7 @@ class RelationshipManager:
                 days_diff = hours_diff / 24 - 7
                 return max(0.1, 0.95 - days_diff * (0.85 / 23))
         except Exception as e:
-            self.logger.error(f"计算时间权重失败: {e}")
+            logger.error(f"计算时间权重失败: {e}")
             return 0.5  # 发生错误时返回中等权重
 
     def tfidf_similarity(self, s1, s2):

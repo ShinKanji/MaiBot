@@ -9,6 +9,7 @@ if TYPE_CHECKING:
 
 from src.common.logger import get_logger
 from src.plugin_system.core.component_registry import component_registry
+from src.plugin_system.core.dependency_manager import dependency_manager
 from src.plugin_system.base.component_types import ComponentType, PluginInfo
 
 logger = get_logger("plugin_manager")
@@ -26,13 +27,32 @@ class PluginManager:
         self.failed_plugins: Dict[str, str] = {}
         self.plugin_paths: Dict[str, str] = {}  # 记录插件名到目录路径的映射
 
+        # 确保插件目录存在
+        self._ensure_plugin_directories()
         logger.info("插件管理器初始化完成")
+
+    def _ensure_plugin_directories(self):
+        """确保所有插件目录存在，如果不存在则创建"""
+        default_directories = ["src/plugins/built_in", "plugins"]
+
+        for directory in default_directories:
+            if not os.path.exists(directory):
+                os.makedirs(directory, exist_ok=True)
+                logger.info(f"创建插件目录: {directory}")
+            if directory not in self.plugin_directories:
+                self.plugin_directories.append(directory)
+                logger.debug(f"已添加插件目录: {directory}")
+            else:
+                logger.warning(f"插件不可重复加载: {directory}")
 
     def add_plugin_directory(self, directory: str):
         """添加插件目录"""
         if os.path.exists(directory):
-            self.plugin_directories.append(directory)
-            logger.debug(f"已添加插件目录: {directory}")
+            if directory not in self.plugin_directories:
+                self.plugin_directories.append(directory)
+                logger.debug(f"已添加插件目录: {directory}")
+            else:
+                logger.warning(f"插件不可重复加载: {directory}")
         else:
             logger.warning(f"插件目录不存在: {directory}")
 
@@ -73,6 +93,12 @@ class PluginManager:
                     self.plugin_paths[plugin_name] = plugin_dir
 
             plugin_instance = plugin_class(plugin_dir=plugin_dir)
+
+            # 检查插件是否启用
+            if not plugin_instance.enable_plugin:
+                logger.info(f"插件 {plugin_name} 已禁用，跳过加载")
+                continue
+
             if plugin_instance.register_plugin():
                 total_registered += 1
                 self.loaded_plugins[plugin_name] = plugin_instance
@@ -117,7 +143,7 @@ class PluginManager:
                 if plugin_info:
                     # 插件基本信息
                     version_info = f"v{plugin_info.version}" if plugin_info.version else ""
-                    author_info = f"by {plugin_info.author}" if plugin_info.author else ""
+                    author_info = f"by {plugin_info.author}" if plugin_info.author else "unknown"
                     info_parts = [part for part in [version_info, author_info] if part]
                     extra_info = f" ({', '.join(info_parts)})" if info_parts else ""
 
@@ -325,11 +351,115 @@ class PluginManager:
         logger.warning("插件热重载功能尚未实现")
         return False
 
+    def check_all_dependencies(self, auto_install: bool = False) -> Dict[str, any]:
+        """检查所有插件的Python依赖包
+
+        Args:
+            auto_install: 是否自动安装缺失的依赖包
+
+        Returns:
+            Dict[str, any]: 检查结果摘要
+        """
+        logger.info("开始检查所有插件的Python依赖包...")
+
+        all_required_missing = []
+        all_optional_missing = []
+        plugin_status = {}
+
+        for plugin_name, _plugin_instance in self.loaded_plugins.items():
+            plugin_info = component_registry.get_plugin_info(plugin_name)
+            if not plugin_info or not plugin_info.python_dependencies:
+                plugin_status[plugin_name] = {"status": "no_dependencies", "missing": []}
+                continue
+
+            logger.info(f"检查插件 {plugin_name} 的依赖...")
+
+            missing_required, missing_optional = dependency_manager.check_dependencies(plugin_info.python_dependencies)
+
+            if missing_required:
+                all_required_missing.extend(missing_required)
+                plugin_status[plugin_name] = {
+                    "status": "missing_required",
+                    "missing": [dep.package_name for dep in missing_required],
+                    "optional_missing": [dep.package_name for dep in missing_optional],
+                }
+                logger.error(f"插件 {plugin_name} 缺少必需依赖: {[dep.package_name for dep in missing_required]}")
+            elif missing_optional:
+                all_optional_missing.extend(missing_optional)
+                plugin_status[plugin_name] = {
+                    "status": "missing_optional",
+                    "missing": [],
+                    "optional_missing": [dep.package_name for dep in missing_optional],
+                }
+                logger.warning(f"插件 {plugin_name} 缺少可选依赖: {[dep.package_name for dep in missing_optional]}")
+            else:
+                plugin_status[plugin_name] = {"status": "ok", "missing": []}
+                logger.info(f"插件 {plugin_name} 依赖检查通过")
+
+        # 汇总结果
+        total_missing = len(set(dep.package_name for dep in all_required_missing))
+        total_optional_missing = len(set(dep.package_name for dep in all_optional_missing))
+
+        logger.info(f"依赖检查完成 - 缺少必需包: {total_missing}个, 缺少可选包: {total_optional_missing}个")
+
+        # 如果需要自动安装
+        install_success = True
+        if auto_install and all_required_missing:
+            # 去重
+            unique_required = {}
+            for dep in all_required_missing:
+                unique_required[dep.package_name] = dep
+
+            logger.info(f"开始自动安装 {len(unique_required)} 个必需依赖包...")
+            install_success = dependency_manager.install_dependencies(list(unique_required.values()), auto_install=True)
+
+        return {
+            "total_plugins_checked": len(plugin_status),
+            "plugins_with_missing_required": len(
+                [p for p in plugin_status.values() if p["status"] == "missing_required"]
+            ),
+            "plugins_with_missing_optional": len(
+                [p for p in plugin_status.values() if p["status"] == "missing_optional"]
+            ),
+            "total_missing_required": total_missing,
+            "total_missing_optional": total_optional_missing,
+            "plugin_status": plugin_status,
+            "auto_install_attempted": auto_install and bool(all_required_missing),
+            "auto_install_success": install_success,
+            "install_summary": dependency_manager.get_install_summary(),
+        }
+
+    def generate_plugin_requirements(self, output_path: str = "plugin_requirements.txt") -> bool:
+        """生成所有插件依赖的requirements文件
+
+        Args:
+            output_path: 输出文件路径
+
+        Returns:
+            bool: 生成是否成功
+        """
+        logger.info("开始生成插件依赖requirements文件...")
+
+        all_dependencies = []
+
+        for plugin_name, _plugin_instance in self.loaded_plugins.items():
+            plugin_info = component_registry.get_plugin_info(plugin_name)
+            if plugin_info and plugin_info.python_dependencies:
+                all_dependencies.append(plugin_info.python_dependencies)
+
+        if not all_dependencies:
+            logger.info("没有找到任何插件依赖")
+            return False
+
+        return dependency_manager.generate_requirements_file(all_dependencies, output_path)
+
 
 # 全局插件管理器实例
 plugin_manager = PluginManager()
 
+# 注释掉以解决插件目录重复加载的情况
 # 默认插件目录
-plugin_manager.add_plugin_directory("src/plugins/built_in")
-plugin_manager.add_plugin_directory("src/plugins/examples")
-plugin_manager.add_plugin_directory("plugins")  # 用户插件目录
+# plugin_manager.add_plugin_directory("src/plugins/built_in")
+# plugin_manager.add_plugin_directory("src/plugins/examples")
+# 用户插件目录
+# plugin_manager.add_plugin_directory("plugins")

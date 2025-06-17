@@ -74,6 +74,9 @@ class MaiEmoji:
 
             # 计算哈希值
             logger.debug(f"[初始化] 正在解码Base64并计算哈希: {self.filename}")
+            # 确保base64字符串只包含ASCII字符
+            if isinstance(image_base64, str):
+                image_base64 = image_base64.encode("ascii", errors="ignore").decode("ascii")
             image_bytes = base64.b64decode(image_base64)
             self.hash = hashlib.md5(image_bytes).hexdigest()
             logger.debug(f"[初始化] 哈希计算成功: {self.hash}")
@@ -320,11 +323,11 @@ async def clear_temp_emoji() -> None:
     logger.info("[清理] 完成")
 
 
-async def clean_unused_emojis(emoji_dir: str, emoji_objects: List["MaiEmoji"]) -> None:
+async def clean_unused_emojis(emoji_dir: str, emoji_objects: List["MaiEmoji"], removed_count: int) -> int:
     """清理指定目录中未被 emoji_objects 追踪的表情包文件"""
     if not os.path.exists(emoji_dir):
         logger.warning(f"[清理] 目标目录不存在，跳过清理: {emoji_dir}")
-        return
+        return removed_count
 
     try:
         # 获取内存中所有有效表情包的完整路径集合
@@ -352,6 +355,8 @@ async def clean_unused_emojis(emoji_dir: str, emoji_objects: List["MaiEmoji"]) -
             logger.info(f"[清理] 在目录 {emoji_dir} 中清理了 {cleaned_count} 个破损表情包。")
         else:
             logger.info(f"[清理] 目录 {emoji_dir} 中没有需要清理的。")
+
+        return removed_count + cleaned_count
 
     except Exception as e:
         logger.error(f"[错误] 清理未使用表情包文件时出错 ({emoji_dir}): {str(e)}")
@@ -564,7 +569,7 @@ class EmojiManager:
                 self.emoji_objects = [e for e in self.emoji_objects if e not in objects_to_remove]
 
             # 清理 EMOJI_REGISTED_DIR 目录中未被追踪的文件
-            await clean_unused_emojis(EMOJI_REGISTED_DIR, self.emoji_objects)
+            removed_count = await clean_unused_emojis(EMOJI_REGISTED_DIR, self.emoji_objects, removed_count)
 
             # 输出清理结果
             if removed_count > 0:
@@ -839,6 +844,9 @@ class EmojiManager:
         """
         try:
             # 解码图片并获取格式
+            # 确保base64字符串只包含ASCII字符
+            if isinstance(image_base64, str):
+                image_base64 = image_base64.encode("ascii", errors="ignore").decode("ascii")
             image_bytes = base64.b64decode(image_base64)
             image_format = Image.open(io.BytesIO(image_bytes)).format.lower()
 

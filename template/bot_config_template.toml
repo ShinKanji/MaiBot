@@ -1,5 +1,5 @@
 [inner]
-version = "2.18.0"
+version = "2.23.0"
 
 #----以下是给开发人员阅读的，如果你只是部署了麦麦，不需要阅读----
 #如果你想要修改配置文件，请在修改后将version的值进行变更
@@ -43,9 +43,11 @@ identity_detail = [
 expression_style = "描述麦麦说话的表达风格，表达习惯，例如：(回复尽量简短一些。可以参考贴吧，知乎和微博的回复风格，回复不要浮夸，不要用夸张修辞，平淡一些。不要有额外的符号，尽量简单简短)"
 enable_expression_learning = false # 是否启用表达学习，麦麦会学习不同群里人类说话风格（群之间不互通）
 learning_interval = 600 # 学习间隔 单位秒
+selection_mode = "llm" # 专注模式下 表达方式选择模式：'llm' 使用LLM智能选择，'random' 使用传统随机选择
 
 [relationship]
 enable_relationship = true # 是否启用关系系统
+relation_frequency = 1 # 关系频率，麦麦构建关系的速度，仅在normal_chat模式下有效
 
 [chat] #麦麦的聊天通用设置
 chat_mode = "normal" # 聊天模式 —— 普通模式：normal，专注模式：focus，在普通模式和专注模式之间自动切换
@@ -104,6 +106,7 @@ self_identify_processor = true # 是否启用自我识别处理器
 relation_processor = true # 是否启用关系识别处理器
 tool_use_processor = false # 是否启用工具使用处理器
 working_memory_processor = false # 是否启用工作记忆处理器，消耗量大
+expression_selector_processor = true # 是否启用表达方式选择处理器
 
 [emoji]
 max_reg_num = 60 # 表情包最大注册数量
@@ -183,7 +186,17 @@ max_length = 512 # 回复允许的最大长度
 max_sentence_num = 8 # 回复允许的最大句子数
 enable_kaomoji_protection = false # 是否启用颜文字保护
 
+[log]
+date_style = "Y-m-d H:i:s" # 日期格式
+log_level_style = "lite" # 日志级别样式,可选FULL，compact，lite
+color_text = "title" # 日志文本颜色，可选none，title，full
+log_level = "INFO" # 全局日志级别（向下兼容，优先级低于下面的分别设置）
+console_log_level = "INFO" # 控制台日志级别，可选: DEBUG, INFO, WARNING, ERROR, CRITICAL
+file_log_level = "DEBUG" # 文件日志级别，可选: DEBUG, INFO, WARNING, ERROR, CRITICAL
 
+# 第三方库日志控制
+suppress_libraries = ["faiss","httpx", "urllib3", "asyncio", "websockets", "httpcore", "requests", "peewee", "openai","uvicorn"] # 完全屏蔽的库
+library_log_levels = { "aiohttp" = "WARNING"} # 设置特定库的日志级别
 
 #下面的模型若使用硅基流动则不需要更改，使用ds官方则改成.env自定义的宏，使用自定义模型则选择定位相似的模型自己填写
 

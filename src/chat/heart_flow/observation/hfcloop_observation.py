@@ -42,11 +42,14 @@ class HFCloopObservation:
 
         # 检查这最近的活动循环中有多少是连续的文本回复 (从最近的开始看)
         for cycle in recent_active_cycles:
-            action_type = cycle.loop_plan_info["action_result"]["action_type"]
-            action_reasoning = cycle.loop_plan_info["action_result"]["reasoning"]
-            is_taken = cycle.loop_action_info["action_taken"]
-            action_taken_time = cycle.loop_action_info["taken_time"]
-            action_taken_time_str = datetime.fromtimestamp(action_taken_time).strftime("%H:%M:%S")
+            action_result = cycle.loop_plan_info.get("action_result", {})
+            action_type = action_result.get("action_type", "unknown")
+            action_reasoning = action_result.get("reasoning", "未提供理由")
+            is_taken = cycle.loop_action_info.get("action_taken", False)
+            action_taken_time = cycle.loop_action_info.get("taken_time", 0)
+            action_taken_time_str = (
+                datetime.fromtimestamp(action_taken_time).strftime("%H:%M:%S") if action_taken_time > 0 else "未知时间"
+            )
             # print(action_type)
             # print(action_reasoning)
             # print(is_taken)
@@ -60,7 +63,7 @@ class HFCloopObservation:
 
             if action_type == "reply":
                 consecutive_text_replies += 1
-                response_text = cycle.loop_action_info["reply_text"]
+                response_text = cycle.loop_action_info.get("reply_text", "")
                 responses_for_prompt.append(response_text)
 
                 if is_taken:

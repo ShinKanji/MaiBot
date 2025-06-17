@@ -1,11 +1,12 @@
 from typing import List, Any, Dict
 from src.common.logger import get_logger
 from src.chat.focus_chat.planners.action_manager import ActionManager
-from src.chat.actions.base_action import ActionActivationType, ChatMode
 from src.chat.utils.chat_message_builder import build_readable_messages, get_raw_msg_before_timestamp_with_chat
 from src.config.config import global_config
 import random
 import time
+from src.chat.message_receive.message_sender import message_manager
+from src.chat.message_receive.message import MessageThinking
 
 logger = get_logger("normal_chat_action_modifier")
 
@@ -43,6 +44,7 @@ class NormalChatActionModifier:
         Args:
             chat_stream: 聊天流对象
             recent_replies: 最近的回复记录
+            message_content: 当前消息内容
             **kwargs: 其他参数
         """
 
@@ -57,7 +59,7 @@ class NormalChatActionModifier:
             chat_context = chat_stream.context if hasattr(chat_stream, "context") else None
             if chat_context:
                 # 获取Normal模式下的可用动作（已经过滤了mode_enable）
-                current_using_actions = self.action_manager.get_using_actions_for_mode(ChatMode.NORMAL)
+                current_using_actions = self.action_manager.get_using_actions_for_mode("normal")
                 # print(f"current_using_actions: {current_using_actions}")
                 for action_name in current_using_actions.keys():
                     if action_name in self.all_actions:
@@ -100,12 +102,12 @@ class NormalChatActionModifier:
                 chat_content = ""
 
         # 获取当前Normal模式下的动作集进行激活判定
-        current_actions = self.action_manager.get_using_actions_for_mode(ChatMode.NORMAL)
+        current_actions = self.action_manager.get_using_actions_for_mode("normal")
 
         # print(f"current_actions: {current_actions}")
         # print(f"chat_content: {chat_content}")
         final_activated_actions = await self._apply_normal_activation_filtering(
-            current_actions, chat_content, message_content
+            current_actions, chat_content, message_content, recent_replies
         )
         # print(f"final_activated_actions: {final_activated_actions}")
 
@@ -150,7 +152,7 @@ class NormalChatActionModifier:
             logger.info(f"{self.log_prefix} 动作调整完成: {' | '.join(reasons)}")
 
         # 获取最终的Normal模式可用动作并记录
-        final_actions = self.action_manager.get_using_actions_for_mode(ChatMode.NORMAL)
+        final_actions = self.action_manager.get_using_actions_for_mode("normal")
         logger.debug(f"{self.log_prefix} 当前Normal模式可用动作: {list(final_actions.keys())}")
 
     async def _apply_normal_activation_filtering(
@@ -158,6 +160,7 @@ class NormalChatActionModifier:
         actions_with_info: Dict[str, Any],
         chat_content: str = "",
         message_content: str = "",
+        recent_replies: List[dict] = None,
     ) -> Dict[str, Any]:
         """
         应用Normal模式的激活类型过滤逻辑
@@ -167,15 +170,27 @@ class NormalChatActionModifier:
         2. RANDOM类型保持概率激活
         3. KEYWORD类型保持关键词匹配
         4. ALWAYS类型直接激活
+        5. change_to_focus_chat 特殊处理：根据回复频率判断
 
         Args:
             actions_with_info: 带完整信息的动作字典
             chat_content: 聊天内容
+            message_content: 当前消息内容
+            recent_replies: 最近的回复记录列表
 
         Returns:
             Dict[str, Any]: 过滤后激活的actions字典
         """
         activated_actions = {}
+
+        # 特殊处理 change_to_focus_chat 动作
+        if global_config.chat.chat_mode == "auto":
+            if "change_to_focus_chat" in actions_with_info:
+                # 检查是否满足切换到focus模式的条件
+                if await self._check_should_switch_to_focus(recent_replies):
+                    activated_actions["change_to_focus_chat"] = actions_with_info["change_to_focus_chat"]
+                    logger.debug(f"{self.log_prefix} 特殊激活 change_to_focus_chat 动作，原因: 满足切换到focus模式条件")
+                    return activated_actions
 
         # 分类处理不同激活类型的actions
         always_actions = {}
@@ -183,14 +198,19 @@ class NormalChatActionModifier:
         keyword_actions = {}
 
         for action_name, action_info in actions_with_info.items():
-            # 使用normal_activation_type
-            activation_type = action_info.get("normal_activation_type", ActionActivationType.ALWAYS)
+            # 跳过已特殊处理的 change_to_focus_chat
+            if action_name == "change_to_focus_chat":
+                continue
 
-            if activation_type == ActionActivationType.ALWAYS:
+            # 使用normal_activation_type
+            activation_type = action_info.get("normal_activation_type", "always")
+
+            # 现在统一是字符串格式的激活类型值
+            if activation_type == "always":
                 always_actions[action_name] = action_info
-            elif activation_type == ActionActivationType.RANDOM or activation_type == ActionActivationType.LLM_JUDGE:
+            elif activation_type == "random" or activation_type == "llm_judge":
                 random_actions[action_name] = action_info
-            elif activation_type == ActionActivationType.KEYWORD:
+            elif activation_type == "keyword":
                 keyword_actions[action_name] = action_info
             else:
                 logger.warning(f"{self.log_prefix}未知的激活类型: {activation_type}，跳过处理")
@@ -220,8 +240,6 @@ class NormalChatActionModifier:
             else:
                 keywords = action_info.get("activation_keywords", [])
                 logger.debug(f"{self.log_prefix}未激活动作: {action_name}，原因: KEYWORD类型未匹配关键词（{keywords}）")
-                # print(f"keywords: {keywords}")
-                # print(f"chat_content: {chat_content}")
 
         logger.debug(f"{self.log_prefix}Normal模式激活类型过滤完成: {list(activated_actions.keys())}")
         return activated_actions
@@ -276,9 +294,51 @@ class NormalChatActionModifier:
             logger.debug(f"{self.log_prefix}动作 {action_name} 未匹配到任何关键词: {activation_keywords}")
             return False
 
+    async def _check_should_switch_to_focus(self, recent_replies: List[dict]) -> bool:
+        """
+        检查是否满足切换到focus模式的条件
+
+        Args:
+            recent_replies: 最近的回复记录列表
+
+        Returns:
+            bool: 是否应该切换到focus模式
+        """
+        # 检查思考消息堆积情况
+        container = await message_manager.get_container(self.stream_id)
+        if container:
+            thinking_count = sum(1 for msg in container.messages if isinstance(msg, MessageThinking))
+            print(f"thinking_count: {thinking_count}")
+            if thinking_count >= 4 * global_config.chat.auto_focus_threshold:  # 如果堆积超过3条思考消息
+                logger.debug(f"{self.log_prefix} 检测到思考消息堆积({thinking_count}条)，切换到focus模式")
+                return True
+
+        if not recent_replies:
+            return False
+
+        current_time = time.time()
+        time_threshold = 120 / global_config.chat.auto_focus_threshold
+        reply_threshold = 6 * global_config.chat.auto_focus_threshold
+
+        one_minute_ago = current_time - time_threshold
+
+        # 统计1分钟内的回复数量
+        recent_reply_count = sum(1 for reply in recent_replies if reply["time"] > one_minute_ago)
+
+        print(f"recent_reply_count: {recent_reply_count}")
+        print(f"reply_threshold: {reply_threshold}")
+
+        should_switch = recent_reply_count > reply_threshold
+        if should_switch:
+            logger.debug(
+                f"{self.log_prefix} 检测到1分钟内回复数量({recent_reply_count})大于{reply_threshold}，满足切换到focus模式条件"
+            )
+
+        return should_switch
+
     def get_available_actions_count(self) -> int:
         """获取当前可用动作数量（排除默认的no_action）"""
-        current_actions = self.action_manager.get_using_actions_for_mode(ChatMode.NORMAL)
+        current_actions = self.action_manager.get_using_actions_for_mode("normal")
         # 排除no_action（如果存在）
         filtered_actions = {k: v for k, v in current_actions.items() if k != "no_action"}
         return len(filtered_actions)

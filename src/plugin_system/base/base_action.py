@@ -61,7 +61,7 @@ class BaseAction(ABC):
         self.log_prefix = log_prefix
         self.shutting_down = shutting_down
 
-        # 设置动作基本信息实例属性（兼容旧系统）
+        # 设置动作基本信息实例属性
         self.action_name: str = getattr(self, "action_name", self.__class__.__name__.lower().replace("action", ""))
         self.action_description: str = getattr(self, "action_description", self.__doc__ or "Action组件")
         self.action_parameters: dict = getattr(self.__class__, "action_parameters", {}).copy()
@@ -112,7 +112,7 @@ class BaseAction(ABC):
             return attr.value
         return str(attr)
 
-    async def send_reply(self, content: str) -> bool:
+    async def send_text(self, content: str) -> bool:
         """发送回复消息
 
         Args:
@@ -137,10 +137,45 @@ class BaseAction(ABC):
                 text=content, user_id=str(chat_stream.user_info.user_id), platform=chat_stream.platform
             )
 
+    async def send_type(self, type: str, text: str, typing: bool = False) -> bool:
+        """发送回复消息
+
+        Args:
+            text: 回复内容
+
+        Returns:
+            bool: 是否发送成功
+        """
+        chat_stream = self.api.get_service("chat_stream")
+        if not chat_stream:
+            logger.error(f"{self.log_prefix} 没有可用的聊天流发送回复")
+            return False
+
+        if chat_stream.group_info:
+            # 群聊
+            return await self.api.send_message_to_target(
+                message_type=type,
+                content=text,
+                platform=chat_stream.platform,
+                target_id=str(chat_stream.group_info.group_id),
+                is_group=True,
+                typing=typing,
+            )
+        else:
+            # 私聊
+            return await self.api.send_message_to_target(
+                message_type=type,
+                content=text,
+                platform=chat_stream.platform,
+                target_id=str(chat_stream.user_info.user_id),
+                is_group=False,
+                typing=typing,
+            )
+
     async def send_command(self, command_name: str, args: dict = None, display_message: str = None) -> bool:
         """发送命令消息
 
-        使用和send_reply相同的方式通过MessageAPI发送命令
+        使用和send_text相同的方式通过MessageAPI发送命令
 
         Args:
             command_name: 命令名称
@@ -329,25 +364,23 @@ class BaseAction(ABC):
             return False
 
     @classmethod
-    def get_action_info(cls, name: str = None, description: str = None) -> "ActionInfo":
+    def get_action_info(cls) -> "ActionInfo":
         """从类属性生成ActionInfo
 
-        Args:
-            name: Action名称，如果不提供则使用类名
-            description: Action描述，如果不提供则使用类文档字符串
+        所有信息都从类属性中读取，确保一致性和完整性。
+        Action类必须定义所有必要的类属性。
 
         Returns:
             ActionInfo: 生成的Action信息对象
         """
 
-        # 优先使用类属性，然后自动生成
-        if name is None:
-            name = getattr(cls, "action_name", cls.__name__.lower().replace("action", ""))
+        # 从类属性读取名称，如果没有定义则使用类名自动生成
+        name = getattr(cls, "action_name", cls.__name__.lower().replace("action", ""))
+
+        # 从类属性读取描述，如果没有定义则使用文档字符串的第一行
+        description = getattr(cls, "action_description", None)
         if description is None:
-            description = getattr(cls, "action_description", None)
-            if description is None:
-                description = cls.__doc__ or f"{cls.__name__} Action组件"
-                description = description.strip().split("\n")[0]  # 取第一行作为描述
+            description = "Action动作"
 
         # 安全获取激活类型值
         def get_enum_value(attr_name, default):

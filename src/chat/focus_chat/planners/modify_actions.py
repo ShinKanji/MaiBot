@@ -6,7 +6,6 @@ from src.chat.heart_flow.observation.chatting_observation import ChattingObserva
 from src.chat.message_receive.chat_stream import get_chat_manager
 from src.config.config import global_config
 from src.llm_models.utils_model import LLMRequest
-from src.chat.actions.base_action import ActionActivationType, ChatMode
 import random
 import asyncio
 import hashlib
@@ -29,7 +28,7 @@ class ActionModifier:
     def __init__(self, action_manager: ActionManager):
         """初始化动作处理器"""
         self.action_manager = action_manager
-        self.all_actions = self.action_manager.get_using_actions_for_mode(ChatMode.FOCUS)
+        self.all_actions = self.action_manager.get_using_actions_for_mode("focus")
 
         # 用于LLM判定的小模型
         self.llm_judge = LLMRequest(
@@ -79,7 +78,10 @@ class ActionModifier:
             if hfc_obs:
                 obs = hfc_obs
                 # 获取适用于FOCUS模式的动作
-                all_actions = self.action_manager.get_using_actions_for_mode(ChatMode.FOCUS)
+                all_actions = self.action_manager.get_using_actions_for_mode("focus")
+                # print("=======================")
+                # print(all_actions)
+                # print("=======================")
                 action_changes = await self.analyze_loop_actions(obs)
                 if action_changes["add"] or action_changes["remove"]:
                     # 合并动作变更
@@ -129,14 +131,29 @@ class ActionModifier:
                 f"{self.log_prefix}传统动作修改完成，当前使用动作: {list(self.action_manager.get_using_actions().keys())}"
             )
 
+        # === chat_mode检查：强制移除非auto模式下的exit_focus_chat ===
+        if global_config.chat.chat_mode != "auto":
+            if "exit_focus_chat" in self.action_manager.get_using_actions():
+                self.action_manager.remove_action_from_using("exit_focus_chat")
+                logger.info(
+                    f"{self.log_prefix}移除动作: exit_focus_chat，原因: chat_mode不为auto（当前模式: {global_config.chat.chat_mode}）"
+                )
+
         # === 第二阶段：激活类型判定 ===
         # 如果提供了聊天上下文，则进行激活类型判定
         if chat_content is not None:
             logger.debug(f"{self.log_prefix}开始激活类型判定阶段")
 
+            # 保存exit_focus_chat动作（如果存在）
+            exit_focus_action = None
+            if "exit_focus_chat" in self.action_manager.get_using_actions():
+                exit_focus_action = self.action_manager.get_using_actions()["exit_focus_chat"]
+                self.action_manager.remove_action_from_using("exit_focus_chat")
+                logger.debug(f"{self.log_prefix}临时移除exit_focus_chat动作以进行激活类型判定")
+
             # 获取当前使用的动作集（经过第一阶段处理，且适用于FOCUS模式）
             current_using_actions = self.action_manager.get_using_actions()
-            all_registered_actions = self.action_manager.get_using_actions_for_mode(ChatMode.FOCUS)
+            all_registered_actions = self.action_manager.get_registered_actions()
 
             # 构建完整的动作信息
             current_actions_with_info = {}
@@ -162,14 +179,15 @@ class ActionModifier:
                     # 确定移除原因
                     if action_name in all_registered_actions:
                         action_info = all_registered_actions[action_name]
-                        activation_type = action_info.get("focus_activation_type", ActionActivationType.ALWAYS)
+                        activation_type = action_info.get("focus_activation_type", "always")
 
-                        if activation_type == ActionActivationType.RANDOM:
+                        # 处理字符串格式的激活类型值
+                        if activation_type == "random":
                             probability = action_info.get("random_probability", 0.3)
                             removal_reasons[action_name] = f"RANDOM类型未触发（概率{probability}）"
-                        elif activation_type == ActionActivationType.LLM_JUDGE:
+                        elif activation_type == "llm_judge":
                             removal_reasons[action_name] = "LLM判定未激活"
-                        elif activation_type == ActionActivationType.KEYWORD:
+                        elif activation_type == "keyword":
                             keywords = action_info.get("activation_keywords", [])
                             removal_reasons[action_name] = f"关键词未匹配（关键词: {keywords}）"
                         else:
@@ -181,6 +199,17 @@ class ActionModifier:
                 self.action_manager.remove_action_from_using(action_name)
                 reason = removal_reasons.get(action_name, "未知原因")
                 logger.info(f"{self.log_prefix}移除动作: {action_name}，原因: {reason}")
+
+            # 恢复exit_focus_chat动作（如果之前存在）
+            if exit_focus_action:
+                # 只有在auto模式下才恢复exit_focus_chat动作
+                if global_config.chat.chat_mode == "auto":
+                    self.action_manager.add_action_to_using("exit_focus_chat")
+                    logger.debug(f"{self.log_prefix}恢复exit_focus_chat动作")
+                else:
+                    logger.debug(
+                        f"{self.log_prefix}跳过恢复exit_focus_chat动作，原因: chat_mode不为auto（当前模式: {global_config.chat.chat_mode}）"
+                    )
 
             logger.info(f"{self.log_prefix}激活类型判定完成，最终可用动作: {list(final_activated_actions.keys())}")
 
@@ -212,15 +241,16 @@ class ActionModifier:
         keyword_actions = {}
 
         for action_name, action_info in actions_with_info.items():
-            activation_type = action_info.get("focus_activation_type", ActionActivationType.ALWAYS)
+            activation_type = action_info.get("focus_activation_type", "always")
 
-            if activation_type == ActionActivationType.ALWAYS:
+            # 现在统一是字符串格式的激活类型值
+            if activation_type == "always":
                 always_actions[action_name] = action_info
-            elif activation_type == ActionActivationType.RANDOM:
+            elif activation_type == "random":
                 random_actions[action_name] = action_info
-            elif activation_type == ActionActivationType.LLM_JUDGE:
+            elif activation_type == "llm_judge":
                 llm_judge_actions[action_name] = action_info
-            elif activation_type == ActionActivationType.KEYWORD:
+            elif activation_type == "keyword":
                 keyword_actions[action_name] = action_info
             else:
                 logger.warning(f"{self.log_prefix}未知的激活类型: {activation_type}，跳过处理")
@@ -552,7 +582,8 @@ class ActionModifier:
         reply_sequence = []  # 记录最近的动作序列
 
         for cycle in recent_cycles:
-            action_type = cycle.loop_plan_info["action_result"]["action_type"]
+            action_result = cycle.loop_plan_info.get("action_result", {})
+            action_type = action_result.get("action_type", "unknown")
             if action_type == "no_reply":
                 no_reply_count += 1
             reply_sequence.append(action_type == "reply")

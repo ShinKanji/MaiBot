@@ -11,11 +11,11 @@ from src.chat.focus_chat.info.action_info import ActionInfo
 from src.chat.focus_chat.info.structured_info import StructuredInfo
 from src.chat.focus_chat.info.self_info import SelfInfo
 from src.chat.focus_chat.info.relation_info import RelationInfo
+from src.chat.focus_chat.info.expression_selection_info import ExpressionSelectionInfo
 from src.common.logger import get_logger
 from src.chat.utils.prompt_builder import Prompt, global_prompt_manager
 from src.individuality.individuality import get_individuality
 from src.chat.focus_chat.planners.action_manager import ActionManager
-from src.chat.actions.base_action import ChatMode
 from json_repair import repair_json
 from src.chat.focus_chat.planners.base_planner import BasePlanner
 from datetime import datetime
@@ -123,6 +123,7 @@ class ActionPlanner(BasePlanner):
             chat_type = "group"
             is_group_chat = True
             relation_info = ""
+            selected_expressions = []
             for info in all_plan_info:
                 if isinstance(info, ObsInfo):
                     observed_messages = info.get_talking_message()
@@ -137,6 +138,8 @@ class ActionPlanner(BasePlanner):
                     relation_info = info.get_processed_info()
                 elif isinstance(info, StructuredInfo):
                     structured_info = info.get_processed_info()
+                elif isinstance(info, ExpressionSelectionInfo):
+                    selected_expressions = info.get_expressions_for_action_data()
                 else:
                     extra_info.append(info.get_processed_info())
                 # elif not isinstance(info, ActionInfo):  # 跳过已处理的ActionInfo
@@ -145,7 +148,7 @@ class ActionPlanner(BasePlanner):
             # 获取经过modify_actions处理后的最终可用动作集
             # 注意：动作的激活判定现在在主循环的modify_actions中完成
             # 使用Focus模式过滤动作
-            current_available_actions_dict = self.action_manager.get_using_actions_for_mode(ChatMode.FOCUS)
+            current_available_actions_dict = self.action_manager.get_using_actions_for_mode("focus")
 
             # 获取完整的动作信息
             all_registered_actions = self.action_manager.get_registered_actions()
@@ -165,7 +168,7 @@ class ActionPlanner(BasePlanner):
                 logger.info(f"{self.log_prefix}{reasoning}")
                 self.action_manager.restore_actions()
                 logger.debug(
-                    f"{self.log_prefix}沉默后恢复到默认动作集, 当前可用: {list(self.action_manager.get_using_actions().keys())}"
+                    f"{self.log_prefix}[focus]沉默后恢复到默认动作集, 当前可用: {list(self.action_manager.get_using_actions().keys())}"
                 )
                 return {
                     "action_result": {"action_type": action, "action_data": action_data, "reasoning": reasoning},
@@ -239,6 +242,11 @@ class ActionPlanner(BasePlanner):
                     if relation_info:
                         action_data["relation_info_block"] = relation_info
 
+                    # 将选中的表达方式传递给action_data
+                    if selected_expressions:
+                        action_data["selected_expressions"] = selected_expressions
+                        logger.debug(f"{self.log_prefix} 传递{len(selected_expressions)}个选中的表达方式到action_data")
+
                     # 对于reply动作不需要额外处理，因为相关字段已经在上面的循环中添加到action_data
 
                     if extracted_action not in current_available_actions:
@@ -263,10 +271,6 @@ class ActionPlanner(BasePlanner):
             traceback.print_exc()
             action = "no_reply"
             reasoning = f"Planner 内部处理错误: {outer_e}"
-
-        # logger.debug(
-        #     f"{self.log_prefix}规划器Prompt:\n{prompt}\n\n决策动作:{action},\n动作信息: '{action_data}'\n理由: {reasoning}"
-        # )
 
         # 恢复到默认动作集
         self.action_manager.restore_actions()

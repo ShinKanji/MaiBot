@@ -2,19 +2,19 @@ import asyncio
 import hashlib
 import os
 import sys
-from pathlib import Path
 import time
 import platform
 import traceback
+from pathlib import Path
 from dotenv import load_dotenv
-from src.common.logger import get_logger
-
-# from src.common.logger import LogConfig, CONFIRM_STYLE_CONFIG
-from src.common.crash_logger import install_crash_handler
-from src.main import MainSystem
 from rich.traceback import install
 
+# 最早期初始化日志系统，确保所有后续模块都使用正确的日志格式
+from src.common.logger import initialize_logging, get_logger, shutdown_logging
+from src.main import MainSystem
 from src.manager.async_task_manager import async_task_manager
+
+initialize_logging()
 
 logger = get_logger("main")
 
@@ -30,7 +30,7 @@ install(extra_lines=3)
 # 设置工作目录为脚本所在目录
 script_dir = os.path.dirname(os.path.abspath(__file__))
 os.chdir(script_dir)
-print(f"已设置工作目录为: {script_dir}")
+logger.info(f"已设置工作目录为: {script_dir}")
 
 
 confirm_logger = get_logger("confirm")
@@ -41,8 +41,6 @@ uvicorn_server = None
 driver = None
 app = None
 loop = None
-
-# shutdown_requested = False  # 新增全局变量
 
 
 async def request_shutdown() -> bool:
@@ -111,12 +109,33 @@ async def graceful_shutdown():
         # 停止所有异步任务
         await async_task_manager.stop_and_wait_all_tasks()
 
-        tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
-        for task in tasks:
-            task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
+        # 获取所有剩余任务，排除当前任务
+        remaining_tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+
+        if remaining_tasks:
+            logger.info(f"正在取消 {len(remaining_tasks)} 个剩余任务...")
+
+            # 取消所有剩余任务
+            for task in remaining_tasks:
+                if not task.done():
+                    task.cancel()
+
+            # 等待所有任务完成，设置超时
+            try:
+                await asyncio.wait_for(asyncio.gather(*remaining_tasks, return_exceptions=True), timeout=15.0)
+                logger.info("所有剩余任务已成功取消")
+            except asyncio.TimeoutError:
+                logger.warning("等待任务取消超时，强制继续关闭")
+            except Exception as e:
+                logger.error(f"等待任务取消时发生异常: {e}")
+
+        logger.info("麦麦优雅关闭完成")
+
+        # 关闭日志系统，释放文件句柄
+        shutdown_logging()
+
     except Exception as e:
-        logger.error(f"麦麦关闭失败: {e}")
+        logger.error(f"麦麦关闭失败: {e}", exc_info=True)
 
 
 def check_eula():
@@ -201,11 +220,8 @@ def raw_main():
     if platform.system().lower() != "windows":
         time.tzset()
 
-    # 安装崩溃日志处理器
-    install_crash_handler()
-
     check_eula()
-    print("检查EULA和隐私条款完成")
+    logger.info("检查EULA和隐私条款完成")
 
     easter_egg()
 
@@ -258,6 +274,13 @@ if __name__ == "__main__":
         if "loop" in locals() and loop and not loop.is_closed():
             loop.close()
             logger.info("事件循环已关闭")
+
+        # 关闭日志系统，释放文件句柄
+        try:
+            shutdown_logging()
+        except Exception as e:
+            print(f"关闭日志系统时出错: {e}")
+
         # 在程序退出前暂停，让你有机会看到输出
         # input("按 Enter 键退出...")  # <--- 添加这行
         sys.exit(exit_code)  # <--- 使用记录的退出码

@@ -185,14 +185,17 @@ class Images(BaseModel):
     用于存储图像信息的模型。
     """
 
+    image_id = TextField(default="")  # 图片唯一ID
     emoji_hash = TextField(index=True)  # 图像的哈希值
     description = TextField(null=True)  # 图像的描述
     path = TextField(unique=True)  # 图像文件的路径
+    # base64 = TextField()  # 图片的base64编码
+    count = IntegerField(default=1)  # 图片被引用的次数
     timestamp = FloatField()  # 时间戳
     type = TextField()  # 图像类型，例如 "emoji"
+    vlm_processed = BooleanField(default=False)  # 是否已经过VLM处理
 
     class Meta:
-        # database = db # 继承自 BaseModel
         table_name = "images"
 
 
@@ -239,6 +242,7 @@ class PersonInfo(BaseModel):
     user_id = TextField(index=True)  # 用户ID
     nickname = TextField()  # 用户昵称
     impression = TextField(null=True)  # 个人印象
+    short_impression = TextField(null=True)  # 个人印象的简短描述
     points = TextField(null=True)  # 个人印象的点
     forgotten_points = TextField(null=True)  # 被遗忘的点
     info_list = TextField(null=True)  # 与Bot的互动
@@ -398,6 +402,10 @@ def initialize_database():
                 model_fields = set(model._meta.fields.keys())
 
                 # 检查并添加缺失字段（原有逻辑）
+                missing_fields = model_fields - existing_columns
+                if missing_fields:
+                    logger.warning(f"表 '{table_name}' 缺失字段: {missing_fields}")
+
                 for field_name, field_obj in model._meta.fields.items():
                     if field_name not in existing_columns:
                         logger.info(f"表 '{table_name}' 缺失字段 '{field_name}'，正在添加...")
@@ -416,12 +424,24 @@ def initialize_database():
                         else:
                             alter_sql += " NOT NULL"
                         if hasattr(field_obj, "default") and field_obj.default is not None:
-                            alter_sql += f" DEFAULT {field_obj.default}"
-                        db.execute_sql(alter_sql)
-                        logger.info(f"字段 '{field_name}' 添加成功")
+                            # 正确处理不同类型的默认值
+                            default_value = field_obj.default
+                            if isinstance(default_value, str):
+                                alter_sql += f" DEFAULT '{default_value}'"
+                            elif isinstance(default_value, bool):
+                                alter_sql += f" DEFAULT {int(default_value)}"
+                            else:
+                                alter_sql += f" DEFAULT {default_value}"
+                        try:
+                            db.execute_sql(alter_sql)
+                            logger.info(f"字段 '{field_name}' 添加成功")
+                        except Exception as e:
+                            logger.error(f"添加字段 '{field_name}' 失败: {e}")
 
                 # 检查并删除多余字段（新增逻辑）
                 extra_fields = existing_columns - model_fields
+                if extra_fields:
+                    logger.warning(f"表 '{table_name}' 存在多余字段: {extra_fields}")
                 for field_name in extra_fields:
                     try:
                         logger.warning(f"表 '{table_name}' 存在多余字段 '{field_name}'，正在尝试删除...")
