@@ -57,7 +57,7 @@ class TTSAction(BaseAction):
 
         try:
             # 发送TTS消息
-            await self.send_type(type="tts_text", text=processed_text)
+            await self.send_custom(message_type="tts_text", content=processed_text)
 
             logger.info(f"{self.log_prefix} TTS动作执行成功，文本长度: {len(processed_text)}")
             return True, "TTS动作执行成功"
@@ -101,10 +101,7 @@ class TTSPlugin(BasePlugin):
     """
 
     # 插件基本信息
-    plugin_name = "tts_plugin"
-    plugin_description = "文字转语音插件"
-    plugin_version = "0.1.0"
-    plugin_author = "MaiBot开发团队"
+    plugin_name = "tts_plugin"  # 内部标识符
     enable_plugin = True
     config_file_name = "config.toml"
 

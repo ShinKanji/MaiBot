@@ -11,7 +11,7 @@ from src.chat.message_receive.chat_stream import get_chat_manager
 from .base_processor import BaseProcessor
 from src.chat.focus_chat.info.info_base import InfoBase
 from src.chat.focus_chat.info.expression_selection_info import ExpressionSelectionInfo
-from src.chat.focus_chat.expressors.exprssion_learner import get_expression_learner
+from src.chat.express.exprssion_learner import get_expression_learner
 from json_repair import repair_json
 import json
 
@@ -101,7 +101,7 @@ class ExpressionSelectorProcessor(BaseProcessor):
 
         self.subheartflow_id = subheartflow_id
         self.last_selection_time = 0
-        self.selection_interval = 60  # 1分钟间隔
+        self.selection_interval = 40  # 1分钟间隔
         self.cached_expressions = []  # 缓存上一次选择的表达方式
 
         # 表达方式选择模式
@@ -149,7 +149,8 @@ class ExpressionSelectorProcessor(BaseProcessor):
         if observations:
             for observation in observations:
                 if isinstance(observation, ChattingObservation):
-                    chat_info = observation.get_observe_info()
+                    # chat_info = observation.get_observe_info()
+                    chat_info = observation.talking_message_str_truncate_short
                     break
 
         if not chat_info:
@@ -158,16 +159,10 @@ class ExpressionSelectorProcessor(BaseProcessor):
 
         try:
             # 根据模式选择表达方式
-            if self.selection_mode == "llm":
-                # LLM模式：调用LLM选择15个，然后随机选5个
-                selected_expressions = await self._select_suitable_expressions_llm(chat_info)
-                cache_size = len(selected_expressions) if selected_expressions else 0
-                mode_desc = f"LLM模式（已缓存{cache_size}个）"
-            else:
-                # 随机模式：直接随机选择5个
-                selected_expressions = await self._select_suitable_expressions_random(chat_info)
-                cache_size = len(selected_expressions) if selected_expressions else 0
-                mode_desc = f"随机模式（已缓存{cache_size}个）"
+            # LLM模式：调用LLM选择15个，然后随机选5个
+            selected_expressions = await self._select_suitable_expressions_llm(chat_info)
+            cache_size = len(selected_expressions) if selected_expressions else 0
+            mode_desc = f"LLM模式（已缓存{cache_size}个）"
 
             if selected_expressions:
                 # 缓存选择的表达方式
@@ -261,7 +256,7 @@ class ExpressionSelectorProcessor(BaseProcessor):
         try:
             content, _ = await self.llm_model.generate_response_async(prompt=prompt)
 
-            logger.info(f"{self.log_prefix} LLM返回结果: {content}")
+            # logger.info(f"{self.log_prefix} LLM返回结果: {content}")
 
             if not content:
                 logger.warning(f"{self.log_prefix} LLM返回空结果")
@@ -290,76 +285,6 @@ class ExpressionSelectorProcessor(BaseProcessor):
         except Exception as e:
             logger.error(f"{self.log_prefix} LLM处理表达方式选择时出错: {e}")
             return []
-
-    async def _select_suitable_expressions_random(self, chat_info: str) -> List[Dict[str, str]]:
-        """随机选择表达方式（原replyer逻辑）"""
-
-        # 获取所有表达方式
-        expression_learner = get_expression_learner()
-        (
-            learnt_style_expressions,
-            learnt_grammar_expressions,
-            personality_expressions,
-        ) = await expression_learner.get_expression_by_chat_id(self.subheartflow_id)
-
-        selected_expressions = []
-
-        # 1. learnt_style_expressions相似度匹配选择3条
-        if learnt_style_expressions:
-            similar_exprs = self._find_similar_expressions(chat_info, learnt_style_expressions, 3)
-            for expr in similar_exprs:
-                if isinstance(expr, dict) and "situation" in expr and "style" in expr:
-                    expr_copy = expr.copy()
-                    expr_copy["type"] = "style"
-                    selected_expressions.append(expr_copy)
-
-        # 2. learnt_grammar_expressions加权随机选2条
-        if learnt_grammar_expressions:
-            weights = [expr.get("count", 1) for expr in learnt_grammar_expressions]
-            selected_learnt = weighted_sample_no_replacement(learnt_grammar_expressions, weights, 2)
-            for expr in selected_learnt:
-                if isinstance(expr, dict) and "situation" in expr and "style" in expr:
-                    expr_copy = expr.copy()
-                    expr_copy["type"] = "grammar"
-                    selected_expressions.append(expr_copy)
-
-        # 3. personality_expressions随机选1条
-        if personality_expressions:
-            expr = random.choice(personality_expressions)
-            if isinstance(expr, dict) and "situation" in expr and "style" in expr:
-                expr_copy = expr.copy()
-                expr_copy["type"] = "personality"
-                selected_expressions.append(expr_copy)
-
-        logger.info(f"{self.log_prefix} 随机模式选择了{len(selected_expressions)}个表达方式")
-        return selected_expressions
-
-    def _find_similar_expressions(self, input_text: str, expressions: List[Dict], top_k: int = 3) -> List[Dict]:
-        """使用简单的文本匹配找出相似的表达方式（简化版，避免依赖sklearn）"""
-        if not expressions or not input_text:
-            return random.sample(expressions, min(top_k, len(expressions))) if expressions else []
-
-        # 简单的关键词匹配
-        scored_expressions = []
-        input_words = set(input_text.lower().split())
-
-        for expr in expressions:
-            situation = expr.get("situation", "").lower()
-            situation_words = set(situation.split())
-
-            # 计算交集大小作为相似度
-            similarity = len(input_words & situation_words)
-            scored_expressions.append((similarity, expr))
-
-        # 按相似度排序
-        scored_expressions.sort(key=lambda x: x[0], reverse=True)
-
-        # 如果没有匹配的，随机选择
-        if all(score == 0 for score, _ in scored_expressions):
-            return random.sample(expressions, min(top_k, len(expressions)))
-
-        # 返回top_k个最相似的
-        return [expr for _, expr in scored_expressions[:top_k]]
 
 
 init_prompt()

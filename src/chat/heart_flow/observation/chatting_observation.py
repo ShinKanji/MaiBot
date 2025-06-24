@@ -14,6 +14,8 @@ from src.chat.message_receive.message import MessageRecv
 from src.chat.heart_flow.observation.observation import Observation
 from src.common.logger import get_logger
 from src.chat.heart_flow.utils_chat import get_chat_type_and_target_info
+from src.chat.message_receive.chat_stream import get_chat_manager
+from src.person_info.person_info import get_person_info_manager
 
 logger = get_logger("observation")
 
@@ -61,6 +63,8 @@ class ChattingObservation(Observation):
         self.talking_message = []
         self.talking_message_str = ""
         self.talking_message_str_truncate = ""
+        self.talking_message_str_short = ""
+        self.talking_message_str_truncate_short = ""
         self.name = global_config.bot.nickname
         self.nick_name = global_config.bot.alias_names
         self.max_now_obs_len = global_config.focus_chat.observation_context_size
@@ -70,10 +74,20 @@ class ChattingObservation(Observation):
         self.oldest_messages = []
         self.oldest_messages_str = ""
 
+        self.last_observe_time = datetime.now().timestamp()
         initial_messages = get_raw_msg_before_timestamp_with_chat(self.chat_id, self.last_observe_time, 10)
+        initial_messages_short = get_raw_msg_before_timestamp_with_chat(self.chat_id, self.last_observe_time, 5)
         self.last_observe_time = initial_messages[-1]["time"] if initial_messages else self.last_observe_time
         self.talking_message = initial_messages
+        self.talking_message_short = initial_messages_short
         self.talking_message_str = build_readable_messages(self.talking_message, show_actions=True)
+        self.talking_message_str_truncate = build_readable_messages(
+            self.talking_message, show_actions=True, truncate=True
+        )
+        self.talking_message_str_short = build_readable_messages(self.talking_message_short, show_actions=True)
+        self.talking_message_str_truncate_short = build_readable_messages(
+            self.talking_message_short, show_actions=True, truncate=True
+        )
 
     def to_dict(self) -> dict:
         """将观察对象转换为可序列化的字典"""
@@ -84,6 +98,8 @@ class ChattingObservation(Observation):
             "chat_target_info": self.chat_target_info,
             "talking_message_str": self.talking_message_str,
             "talking_message_str_truncate": self.talking_message_str_truncate,
+            "talking_message_str_short": self.talking_message_str_short,
+            "talking_message_str_truncate_short": self.talking_message_str_truncate_short,
             "name": self.name,
             "nick_name": self.nick_name,
             "last_observe_time": self.last_observe_time,
@@ -92,39 +108,28 @@ class ChattingObservation(Observation):
     def get_observe_info(self, ids=None):
         return self.talking_message_str
 
-    def search_message_by_text(self, text: str) -> Optional[MessageRecv]:
+    def get_recv_message_by_text(self, sender: str, text: str) -> Optional[MessageRecv]:
         """
         根据回复的纯文本
         1. 在talking_message中查找最新的，最匹配的消息
         2. 如果找到，则返回消息
         """
-        msg_list = []
         find_msg = None
         reverse_talking_message = list(reversed(self.talking_message))
 
         for message in reverse_talking_message:
-            if message["processed_plain_text"] == text:
-                find_msg = message
-                break
-            else:
-                raw_message = message.get("raw_message")
-                if raw_message:
-                    similarity = difflib.SequenceMatcher(None, text, raw_message).ratio()
-                else:
-                    similarity = difflib.SequenceMatcher(None, text, message.get("processed_plain_text", "")).ratio()
-                msg_list.append({"message": message, "similarity": similarity})
+            user_id = message["user_id"]
+            platform = message["platform"]
+            person_id = get_person_info_manager().get_person_id(platform, user_id)
+            person_name = get_person_info_manager().get_value(person_id, "person_name")
+            if person_name == sender:
+                similarity = difflib.SequenceMatcher(None, text, message["processed_plain_text"]).ratio()
+                if similarity >= 0.9:
+                    find_msg = message
+                    break
 
         if not find_msg:
-            if msg_list:
-                msg_list.sort(key=lambda x: x["similarity"], reverse=True)
-                if msg_list[0]["similarity"] >= 0.9:
-                    find_msg = msg_list[0]["message"]
-                else:
-                    logger.debug("没有找到锚定消息,相似度低")
-                    return None
-            else:
-                logger.debug("没有找到锚定消息，没有消息捕获")
-                return None
+            return None
 
         user_info = {
             "platform": find_msg.get("user_platform", ""),
@@ -167,6 +172,9 @@ class ChattingObservation(Observation):
             "processed_plain_text": find_msg.get("processed_plain_text"),
         }
         find_rec_msg = MessageRecv(message_dict)
+
+        find_rec_msg.update_chat_stream(get_chat_manager().get_or_create_stream(self.chat_id))
+
         return find_rec_msg
 
     async def observe(self):
@@ -178,6 +186,8 @@ class ChattingObservation(Observation):
             limit=self.max_now_obs_len,
             limit_mode="latest",
         )
+
+        # print(f"new_messages_list: {new_messages_list}")
 
         last_obs_time_mark = self.last_observe_time
         if new_messages_list:
@@ -225,6 +235,24 @@ class ChattingObservation(Observation):
         )
         self.talking_message_str_truncate = build_readable_messages(
             messages=self.talking_message,
+            timestamp_mode="normal_no_YMD",
+            read_mark=last_obs_time_mark,
+            truncate=True,
+            show_actions=True,
+        )
+
+        # 构建简短版本 - 使用最新一半的消息
+        half_count = len(self.talking_message) // 2
+        recent_messages = self.talking_message[-half_count:] if half_count > 0 else self.talking_message
+
+        self.talking_message_str_short = build_readable_messages(
+            messages=recent_messages,
+            timestamp_mode="lite",
+            read_mark=last_obs_time_mark,
+            show_actions=True,
+        )
+        self.talking_message_str_truncate_short = build_readable_messages(
+            messages=recent_messages,
             timestamp_mode="normal_no_YMD",
             read_mark=last_obs_time_mark,
             truncate=True,

@@ -5,8 +5,6 @@ from src.chat.utils.chat_message_builder import build_readable_messages, get_raw
 from src.config.config import global_config
 import random
 import time
-from src.chat.message_receive.message_sender import message_manager
-from src.chat.message_receive.message import MessageThinking
 
 logger = get_logger("normal_chat_action_modifier")
 
@@ -170,7 +168,6 @@ class NormalChatActionModifier:
         2. RANDOM类型保持概率激活
         3. KEYWORD类型保持关键词匹配
         4. ALWAYS类型直接激活
-        5. change_to_focus_chat 特殊处理：根据回复频率判断
 
         Args:
             actions_with_info: 带完整信息的动作字典
@@ -183,25 +180,12 @@ class NormalChatActionModifier:
         """
         activated_actions = {}
 
-        # 特殊处理 change_to_focus_chat 动作
-        if global_config.chat.chat_mode == "auto":
-            if "change_to_focus_chat" in actions_with_info:
-                # 检查是否满足切换到focus模式的条件
-                if await self._check_should_switch_to_focus(recent_replies):
-                    activated_actions["change_to_focus_chat"] = actions_with_info["change_to_focus_chat"]
-                    logger.debug(f"{self.log_prefix} 特殊激活 change_to_focus_chat 动作，原因: 满足切换到focus模式条件")
-                    return activated_actions
-
         # 分类处理不同激活类型的actions
         always_actions = {}
         random_actions = {}
         keyword_actions = {}
 
         for action_name, action_info in actions_with_info.items():
-            # 跳过已特殊处理的 change_to_focus_chat
-            if action_name == "change_to_focus_chat":
-                continue
-
             # 使用normal_activation_type
             activation_type = action_info.get("normal_activation_type", "always")
 
@@ -222,7 +206,7 @@ class NormalChatActionModifier:
 
         # 2. 处理RANDOM类型（概率激活）
         for action_name, action_info in random_actions.items():
-            probability = action_info.get("random_probability", 0.3)
+            probability = action_info.get("random_activation_probability", ActionManager.DEFAULT_RANDOM_PROBABILITY)
             should_activate = random.random() < probability
             if should_activate:
                 activated_actions[action_name] = action_info
@@ -293,48 +277,6 @@ class NormalChatActionModifier:
         else:
             logger.debug(f"{self.log_prefix}动作 {action_name} 未匹配到任何关键词: {activation_keywords}")
             return False
-
-    async def _check_should_switch_to_focus(self, recent_replies: List[dict]) -> bool:
-        """
-        检查是否满足切换到focus模式的条件
-
-        Args:
-            recent_replies: 最近的回复记录列表
-
-        Returns:
-            bool: 是否应该切换到focus模式
-        """
-        # 检查思考消息堆积情况
-        container = await message_manager.get_container(self.stream_id)
-        if container:
-            thinking_count = sum(1 for msg in container.messages if isinstance(msg, MessageThinking))
-            print(f"thinking_count: {thinking_count}")
-            if thinking_count >= 4 * global_config.chat.auto_focus_threshold:  # 如果堆积超过3条思考消息
-                logger.debug(f"{self.log_prefix} 检测到思考消息堆积({thinking_count}条)，切换到focus模式")
-                return True
-
-        if not recent_replies:
-            return False
-
-        current_time = time.time()
-        time_threshold = 120 / global_config.chat.auto_focus_threshold
-        reply_threshold = 6 * global_config.chat.auto_focus_threshold
-
-        one_minute_ago = current_time - time_threshold
-
-        # 统计1分钟内的回复数量
-        recent_reply_count = sum(1 for reply in recent_replies if reply["time"] > one_minute_ago)
-
-        print(f"recent_reply_count: {recent_reply_count}")
-        print(f"reply_threshold: {reply_threshold}")
-
-        should_switch = recent_reply_count > reply_threshold
-        if should_switch:
-            logger.debug(
-                f"{self.log_prefix} 检测到1分钟内回复数量({recent_reply_count})大于{reply_threshold}，满足切换到focus模式条件"
-            )
-
-        return should_switch
 
     def get_available_actions_count(self) -> int:
         """获取当前可用动作数量（排除默认的no_action）"""

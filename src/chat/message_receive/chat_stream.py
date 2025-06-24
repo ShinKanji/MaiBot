@@ -172,6 +172,15 @@ class ChatManager:
         key = "_".join(components)
         return hashlib.md5(key.encode()).hexdigest()
 
+    def get_stream_id(self, platform: str, chat_id: str, is_group: bool = True) -> str:
+        """获取聊天流ID"""
+        if is_group:
+            components = [platform, str(chat_id)]
+        else:
+            components = [platform, str(chat_id), "private"]
+        key = "_".join(components)
+        return hashlib.md5(key.encode()).hexdigest()
+
     async def get_or_create_stream(
         self, platform: str, user_info: UserInfo, group_info: Optional[GroupInfo] = None
     ) -> ChatStream:
@@ -335,6 +344,7 @@ class ChatManager:
 
     async def load_all_streams(self):
         """从数据库加载所有聊天流"""
+        logger.info("正在从数据库加载所有聊天流")
 
         def _db_load_all_streams_sync():
             loaded_streams_data = []

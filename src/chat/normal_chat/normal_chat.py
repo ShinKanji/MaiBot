@@ -22,15 +22,15 @@ from src.chat.focus_chat.planners.action_manager import ActionManager
 from src.chat.normal_chat.normal_chat_planner import NormalChatPlanner
 from src.chat.normal_chat.normal_chat_action_modifier import NormalChatActionModifier
 from src.chat.normal_chat.normal_chat_expressor import NormalChatExpressor
-from src.chat.focus_chat.replyer.default_replyer import DefaultReplyer
+from src.chat.focus_chat.replyer.default_generator import DefaultReplyer
 from src.person_info.person_info import PersonInfoManager
+from src.person_info.relationship_manager import get_relationship_manager
 from src.chat.utils.chat_message_builder import (
     get_raw_msg_by_timestamp_with_chat,
     get_raw_msg_by_timestamp_with_chat_inclusive,
     get_raw_msg_before_timestamp_with_chat,
     num_new_messages_since,
 )
-from src.person_info.relationship_manager import get_relationship_manager
 
 willing_manager = get_willing_manager()
 
@@ -87,7 +87,7 @@ class NormalChat:
         self.person_engaged_cache: Dict[str, List[Dict[str, any]]] = {}
 
         # 持久化存储文件路径
-        self.cache_file_path = os.path.join("data", f"relationship_cache_{self.stream_id}.pkl")
+        self.cache_file_path = os.path.join("data", "relationship", f"relationship_cache_{self.stream_id}.pkl")
 
         # 最后处理的消息时间，避免重复处理相同消息
         self.last_processed_message_time = 0.0
@@ -563,21 +563,21 @@ class NormalChat:
                                     self.interest_dict.pop(msg_id, None)
 
                             # 创建并行任务列表
-                            tasks = []
+                            coroutines = []
                             for msg_id, (message, interest_value, is_mentioned) in items_to_process:
-                                task = process_single_message(msg_id, message, interest_value, is_mentioned)
-                                tasks.append(task)
+                                coroutine = process_single_message(msg_id, message, interest_value, is_mentioned)
+                                coroutines.append(coroutine)
 
                             # 并行执行所有任务，限制并发数量避免资源过度消耗
-                            if tasks:
+                            if coroutines:
                                 # 使用信号量控制并发数，最多同时处理5个消息
                                 semaphore = asyncio.Semaphore(5)
 
-                                async def limited_process(task, sem):
+                                async def limited_process(coroutine, sem):
                                     async with sem:
-                                        await task
+                                        await coroutine
 
-                                limited_tasks = [limited_process(task, semaphore) for task in tasks]
+                                limited_tasks = [limited_process(coroutine, semaphore) for coroutine in coroutines]
                                 await asyncio.gather(*limited_tasks, return_exceptions=True)
 
                     except asyncio.CancelledError:
@@ -609,6 +609,17 @@ class NormalChat:
         if self._disabled:
             logger.info(f"[{self.stream_name}] 已停用，忽略 normal_response。")
             return
+
+        # 新增：在auto模式下检查是否需要直接切换到focus模式
+        if global_config.chat.chat_mode == "auto":
+            should_switch = await self._check_should_switch_to_focus()
+            if should_switch:
+                logger.info(f"[{self.stream_name}] 检测到切换到focus聊天模式的条件，直接执行切换")
+                if self.on_switch_to_focus_callback:
+                    await self.on_switch_to_focus_callback()
+                    return
+                else:
+                    logger.warning(f"[{self.stream_name}] 没有设置切换到focus聊天模式的回调函数，无法执行切换")
 
         # 执行定期清理
         self._cleanup_old_segments()
@@ -729,9 +740,6 @@ class NormalChat:
                     if action_type == "no_action":
                         logger.debug(f"[{self.stream_name}] Planner决定不执行任何额外动作")
                         return no_action
-                    elif action_type == "change_to_focus_chat":
-                        logger.info(f"[{self.stream_name}] Planner决定切换到focus聊天模式")
-                        return None
 
                     # 执行额外的动作（不影响回复生成）
                     action_result = await self._execute_action(action_type, action_data, message, thinking_id)
@@ -771,17 +779,11 @@ class NormalChat:
                 logger.debug(f"[{self.stream_name}] 额外动作处理完成: {self.action_type}")
 
             if not response_set or (
-                self.enable_planner
-                and self.action_type not in ["no_action", "change_to_focus_chat"]
-                and not self.is_parallel_action
+                self.enable_planner and self.action_type not in ["no_action"] and not self.is_parallel_action
             ):
                 if not response_set:
                     logger.info(f"[{self.stream_name}] 模型未生成回复内容")
-                elif (
-                    self.enable_planner
-                    and self.action_type not in ["no_action", "change_to_focus_chat"]
-                    and not self.is_parallel_action
-                ):
+                elif self.enable_planner and self.action_type not in ["no_action"] and not self.is_parallel_action:
                     logger.info(f"[{self.stream_name}] 模型选择其他动作（非并行动作）")
                 # 如果模型未生成回复，移除思考消息
                 container = await message_manager.get_container(self.stream_id)  # 使用 self.stream_id
@@ -827,16 +829,6 @@ class NormalChat:
                 # 保持最近回复历史在限定数量内
                 if len(self.recent_replies) > self.max_replies_history:
                     self.recent_replies = self.recent_replies[-self.max_replies_history :]
-
-                # 检查是否需要切换到focus模式
-                if global_config.chat.chat_mode == "auto":
-                    if self.action_type == "change_to_focus_chat":
-                        logger.info(f"[{self.stream_name}] 检测到切换到focus聊天模式的请求")
-                        if self.on_switch_to_focus_callback:
-                            await self.on_switch_to_focus_callback()
-                        else:
-                            logger.warning(f"[{self.stream_name}] 没有设置切换到focus聊天模式的回调函数，无法执行切换")
-                        return
 
             # 回复后处理
             await willing_manager.after_generate_reply_handle(message.message_info.message_id)
@@ -1016,21 +1008,21 @@ class NormalChat:
         # 计算回复频率
         _reply_frequency = bot_reply_count / total_message_count
 
-        differ = global_config.normal_chat.talk_frequency - (bot_reply_count / duration)
+        differ = global_config.chat.talk_frequency - (bot_reply_count / duration)
 
         # 如果回复频率低于0.5，增加回复概率
         if differ > 0.1:
             mapped = 1 + (differ - 0.1) * 4 / 0.9
             mapped = max(1, min(5, mapped))
             logger.debug(
-                f"[{self.stream_name}] 回复频率低于{global_config.normal_chat.talk_frequency}，增加回复概率，differ={differ:.3f}，映射值={mapped:.2f}"
+                f"[{self.stream_name}] 回复频率低于{global_config.chat.talk_frequency}，增加回复概率，differ={differ:.3f}，映射值={mapped:.2f}"
             )
             self.willing_amplifier += mapped * 0.1  # 你可以根据实际需要调整系数
         elif differ < -0.1:
             mapped = 1 - (differ + 0.1) * 4 / 0.9
             mapped = max(1, min(5, mapped))
             logger.debug(
-                f"[{self.stream_name}] 回复频率高于{global_config.normal_chat.talk_frequency}，减少回复概率，differ={differ:.3f}，映射值={mapped:.2f}"
+                f"[{self.stream_name}] 回复频率高于{global_config.chat.talk_frequency}，减少回复概率，differ={differ:.3f}，映射值={mapped:.2f}"
             )
             self.willing_amplifier -= mapped * 0.1
 
@@ -1063,9 +1055,6 @@ class NormalChat:
                 reasoning=action_data.get("reasoning", ""),
                 cycle_timers={},  # normal_chat使用空的cycle_timers
                 thinking_id=thinking_id,
-                observations=[],  # normal_chat不使用observations
-                expressor=self.expressor,  # 使用normal_chat专用的expressor
-                replyer=self.replyer,
                 chat_stream=self.chat_stream,
                 log_prefix=self.stream_name,
                 shutting_down=self._disabled,
@@ -1127,8 +1116,11 @@ class NormalChat:
             logger.info(f"[{self.stream_name}] 用户 {person_id} 关系构建已启动，缓存已清理")
 
     async def _build_relation_for_person_segments(self, person_id: str, segments: List[Dict[str, any]]):
-        """基于消息段为特定用户构建关系"""
-        logger.info(f"[{self.stream_name}] 开始为 {person_id} 基于 {len(segments)} 个消息段更新印象")
+        """基于消息段更新用户印象，统一使用focus chat的构建方式"""
+        if not segments:
+            return
+
+        logger.debug(f"[{self.stream_name}] 开始为 {person_id} 基于 {len(segments)} 个消息段更新印象")
         try:
             processed_messages = []
 
@@ -1140,7 +1132,7 @@ class NormalChat:
 
                 # 获取该段的消息（包含边界）
                 segment_messages = get_raw_msg_by_timestamp_with_chat_inclusive(self.stream_id, start_time, end_time)
-                logger.info(
+                logger.debug(
                     f"[{self.stream_name}] 消息段 {i + 1}: {start_date} - {time.strftime('%Y-%m-%d %H:%M', time.localtime(end_time))}, 消息数: {len(segment_messages)}"
                 )
 
@@ -1168,20 +1160,53 @@ class NormalChat:
                 # 按时间排序所有消息（包括间隔标识）
                 processed_messages.sort(key=lambda x: x["time"])
 
-                logger.info(
+                logger.debug(
                     f"[{self.stream_name}] 为 {person_id} 获取到总共 {len(processed_messages)} 条消息（包含间隔标识）用于印象更新"
                 )
                 relationship_manager = get_relationship_manager()
 
-                # 调用原有的更新方法
+                # 调用统一的更新方法
                 await relationship_manager.update_person_impression(
                     person_id=person_id, timestamp=time.time(), bot_engaged_messages=processed_messages
                 )
-
-                logger.info(f"[{self.stream_name}] 用户 {person_id} 关系构建完成")
             else:
-                logger.warning(f"[{self.stream_name}] 没有找到 {person_id} 的消息段对应的消息，不更新印象")
+                logger.debug(f"[{self.stream_name}] 没有找到 {person_id} 的消息段对应的消息，不更新印象")
 
         except Exception as e:
             logger.error(f"[{self.stream_name}] 为 {person_id} 更新印象时发生错误: {e}")
             logger.error(traceback.format_exc())
+
+    async def _check_should_switch_to_focus(self) -> bool:
+        """
+        检查是否满足切换到focus模式的条件
+
+        Returns:
+            bool: 是否应该切换到focus模式
+        """
+        # 检查思考消息堆积情况
+        container = await message_manager.get_container(self.stream_id)
+        if container:
+            thinking_count = sum(1 for msg in container.messages if isinstance(msg, MessageThinking))
+            if thinking_count >= 4 * global_config.chat.auto_focus_threshold:  # 如果堆积超过阈值条思考消息
+                logger.debug(f"[{self.stream_name}] 检测到思考消息堆积({thinking_count}条)，切换到focus模式")
+                return True
+
+        if not self.recent_replies:
+            return False
+
+        current_time = time.time()
+        time_threshold = 120 / global_config.chat.auto_focus_threshold
+        reply_threshold = 6 * global_config.chat.auto_focus_threshold
+
+        one_minute_ago = current_time - time_threshold
+
+        # 统计指定时间内的回复数量
+        recent_reply_count = sum(1 for reply in self.recent_replies if reply["time"] > one_minute_ago)
+
+        should_switch = recent_reply_count > reply_threshold
+        if should_switch:
+            logger.debug(
+                f"[{self.stream_name}] 检测到{time_threshold:.0f}秒内回复数量({recent_reply_count})大于{reply_threshold}，满足切换到focus模式条件"
+            )
+
+        return should_switch

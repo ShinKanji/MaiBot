@@ -62,7 +62,7 @@ class VTBAction(BaseAction):
 
         try:
             # 发送VTB动作消息 - 使用新版本的send_type方法
-            await self.send_type(type="vtb_text", text=processed_text)
+            await self.send_custom(message_type="vtb_text", content=processed_text)
 
             logger.info(f"{self.log_prefix} VTB动作执行成功，文本内容: {processed_text}")
             return True, "VTB动作执行成功"
@@ -107,10 +107,7 @@ class VTBPlugin(BasePlugin):
     """
 
     # 插件基本信息
-    plugin_name = "vtb_plugin"
-    plugin_description = "虚拟主播情感表达插件"
-    plugin_version = "0.1.0"
-    plugin_author = "MaiBot开发团队"
+    plugin_name = "vtb_plugin"  # 内部标识符
     enable_plugin = True
     config_file_name = "config.toml"
 

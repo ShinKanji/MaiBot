@@ -69,6 +69,9 @@ class ChatConfig(ConfigBase):
     chat_mode: str = "normal"
     """聊天模式"""
 
+    talk_frequency: float = 1
+    """回复频率阈值"""
+
     auto_focus_threshold: float = 1.0
     """自动切换到专注聊天的阈值，越低越容易进入专注聊天"""
 
@@ -112,9 +115,6 @@ class NormalChatConfig(ConfigBase):
     willing_mode: str = "classical"
     """意愿模式"""
 
-    talk_frequency: float = 1
-    """回复频率阈值"""
-
     response_interested_rate_amplifier: float = 1.0
     """回复兴趣度放大系数"""
 
@@ -141,7 +141,7 @@ class NormalChatConfig(ConfigBase):
 class FocusChatConfig(ConfigBase):
     """专注聊天配置类"""
 
-    observation_context_size: int = 12
+    observation_context_size: int = 20
     """可观察到的最长上下文大小，超过这个值的上下文会被压缩"""
 
     compressed_length: int = 5
@@ -167,13 +167,7 @@ class FocusChatConfig(ConfigBase):
 class FocusChatProcessorConfig(ConfigBase):
     """专注聊天处理器配置类"""
 
-    mind_processor: bool = False
-    """是否启用思维处理器"""
-
-    self_identify_processor: bool = True
-    """是否启用自我识别处理器"""
-
-    relation_processor: bool = True
+    person_impression_processor: bool = True
     """是否启用关系识别处理器"""
 
     tool_use_processor: bool = True
@@ -199,8 +193,11 @@ class ExpressionConfig(ConfigBase):
     enable_expression_learning: bool = True
     """是否启用表达学习"""
 
-    selection_mode: str = "llm"
-    """表达方式选择模式：'llm' 使用LLM智能选择，'random' 使用传统随机选择"""
+    expression_groups: list[list[str]] = field(default_factory=list)
+    """
+    表达学习互通组
+    格式: [["qq:12345:group", "qq:67890:private"]]
+    """
 
 
 @dataclass

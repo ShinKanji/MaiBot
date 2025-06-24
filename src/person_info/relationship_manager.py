@@ -240,6 +240,10 @@ class RelationshipManager:
     {{
         "point": "{person_name}居然搞错了我的名字，生气了",
         "weight": 8
+    }},
+    {{
+        "point": "{person_name}喜欢吃辣，我和她关系不错",
+        "weight": 8
     }}
 }}
 
@@ -258,11 +262,11 @@ class RelationshipManager:
         for original_name, mapped_name in name_mapping.items():
             points = points.replace(mapped_name, original_name)
 
-        logger.info(f"prompt: {prompt}")
-        logger.info(f"points: {points}")
+        # logger.info(f"prompt: {prompt}")
+        # logger.info(f"points: {points}")
 
         if not points:
-            logger.warning(f"未能从LLM获取 {person_name} 的新印象")
+            logger.info(f"对 {person_name} 没啥新印象")
             return
 
         # 解析JSON并转换为元组列表
@@ -272,13 +276,19 @@ class RelationshipManager:
             if points_data == "none" or not points_data or points_data.get("point") == "none":
                 points_list = []
             else:
-                logger.info(f"points_data: {points_data}")
+                # logger.info(f"points_data: {points_data}")
                 if isinstance(points_data, dict) and "points" in points_data:
                     points_data = points_data["points"]
                 if not isinstance(points_data, list):
                     points_data = [points_data]
                 # 添加可读时间到每个point
                 points_list = [(item["point"], float(item["weight"]), current_time) for item in points_data]
+
+                logger_str = f"了解了有关{person_name}的新印象：\n"
+                for point in points_list:
+                    logger_str += f"{point[0]},重要性：{point[1]}\n"
+                logger.info(logger_str)
+
         except json.JSONDecodeError:
             logger.error(f"解析points JSON失败: {points}")
             return
@@ -413,8 +423,7 @@ class RelationshipManager:
 
 请根据你对ta过去的了解，和ta最近的行为，修改，整合，原有的了解，总结出对用户 {person_name}(昵称:{nickname})新的了解。
 
-了解可以包含性格，关系，感受，态度，你推测的ta的性别，年龄，外貌，身份，习惯，爱好，重要事件，重要经历等等内容。也可以包含其他点。
-关注友好和不友好的因素，不要忽略。
+了解请包含性格，对你的态度，你推测的ta的年龄，身份，习惯，爱好，重要事件和其他重要属性这几方面内容。
 请严格按照以下给出的信息，不要新增额外内容。
 
 你之前对他的了解是：
@@ -455,9 +464,65 @@ class RelationshipManager:
 
                 await person_info_manager.update_one_field(person_id, "short_impression", compressed_short_summary)
 
-                forgotten_points = []
+                relation_value_prompt = f"""
+你的名字是{global_config.bot.nickname}。
+你最近对{person_name}的了解如下：
+{points_text}
 
-            # 这句代码的作用是：将更新后的 forgotten_points（遗忘的记忆点）列表，序列化为 JSON 字符串后，写回到数据库中的 forgotten_points 字段
+请根据以上信息，评估你和{person_name}的关系，给出两个维度的值：熟悉度和好感度。
+1.  了解度 (familiarity_value): 0-100的整数，表示这些信息让你对ta的了解增进程度。
+    - 0: 没有任何进一步了解
+    - 25: 有点进一步了解
+    - 50: 有进一步了解
+    - 75: 有更多了解
+    - 100: 有了更多重要的了解
+
+2.  **好感度 (liking_value)**: 0-100的整数，表示这些信息让你对ta的喜。
+    - 0: 非常厌恶
+    - 25: 有点反感
+    - 50: 中立/无感
+    - 75: 有点喜欢
+    - 100: 非常喜欢/开心对这个人
+
+请严格按照json格式输出，不要有其他多余内容：
+{{
+    "familiarity_value": <0-100之间的整数>,
+    "liking_value": <0-100之间的整数>
+}}
+"""
+                try:
+                    relation_value_response, _ = await self.relationship_llm.generate_response_async(
+                        prompt=relation_value_prompt
+                    )
+                    relation_value_json = json.loads(repair_json(relation_value_response))
+
+                    # 从LLM获取新生成的值
+                    new_familiarity_value = int(relation_value_json.get("familiarity_value", 0))
+                    new_liking_value = int(relation_value_json.get("liking_value", 50))
+
+                    if new_familiarity_value > 25:
+                        old_familiarity_value = await person_info_manager.get_value(person_id, "familiarity_value") or 0
+                        old_familiarity_value += new_familiarity_value - 25 / 75
+
+                    if new_liking_value > 50:
+                        liking_value = await person_info_manager.get_value(person_id, "liking_value") or 50
+                        liking_value += new_liking_value - 50 / 50
+                    if new_liking_value < 50:
+                        liking_value = await person_info_manager.get_value(person_id, "liking_value") or 50
+                        liking_value -= (50 - new_liking_value / 50) * 1.5
+
+                    await person_info_manager.update_one_field(person_id, "familiarity_value", liking_value)
+                    await person_info_manager.update_one_field(person_id, "liking_value", liking_value)
+                    logger.info(f"更新了与 {person_name} 的关系值: 熟悉度={liking_value}, 好感度={liking_value}")
+                except (json.JSONDecodeError, ValueError, TypeError) as e:
+                    logger.error(f"解析relation_value JSON失败或值无效: {e}, 响应: {relation_value_response}")
+
+                forgotten_points = []
+                info_list = []
+                await person_info_manager.update_one_field(
+                    person_id, "info_list", json.dumps(info_list, ensure_ascii=False, indent=None)
+                )
+
             await person_info_manager.update_one_field(
                 person_id, "forgotten_points", json.dumps(forgotten_points, ensure_ascii=False, indent=None)
             )
@@ -473,7 +538,7 @@ class RelationshipManager:
             await person_info_manager.update_one_field(person_id, "know_since", timestamp)
         await person_info_manager.update_one_field(person_id, "last_know", timestamp)
 
-        logger.info(f"印象更新完成 for {person_name}")
+        logger.info(f"{person_name} 的印象更新完成")
 
     def build_focus_readable_messages(self, messages: list, target_person_id: str = None) -> str:
         """格式化消息，处理所有消息内容"""
@@ -482,7 +547,7 @@ class RelationshipManager:
 
         # 直接处理所有消息，不进行过滤
         return build_readable_messages(
-            messages=messages, replace_bot_name=True, timestamp_mode="normal_no_YMD", truncate=False
+            messages=messages, replace_bot_name=True, timestamp_mode="normal_no_YMD", truncate=True
         )
 
     def calculate_time_weight(self, point_time: str, current_time: str) -> float:

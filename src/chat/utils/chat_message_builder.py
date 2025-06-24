@@ -487,7 +487,7 @@ def build_pic_mapping_info(pic_id_mapping: Dict[str, str]) -> str:
 
     for pic_id, display_name in sorted_items:
         # 从数据库中获取图片描述
-        description = "内容正在阅读"
+        description = "内容正在阅读，请稍等"
         try:
             image = Images.get_or_none(Images.image_id == pic_id)
             if image and image.description:
@@ -559,13 +559,24 @@ def build_readable_messages(
         chat_id = copy_messages[0].get("chat_id") if copy_messages else None
 
         # 获取这个时间范围内的动作记录，并匹配chat_id
-        actions = (
+        actions_in_range = (
             ActionRecords.select()
             .where(
                 (ActionRecords.time >= min_time) & (ActionRecords.time <= max_time) & (ActionRecords.chat_id == chat_id)
             )
             .order_by(ActionRecords.time)
         )
+
+        # 获取最新消息之后的第一个动作记录
+        action_after_latest = (
+            ActionRecords.select()
+            .where((ActionRecords.time > max_time) & (ActionRecords.chat_id == chat_id))
+            .order_by(ActionRecords.time)
+            .limit(1)
+        )
+
+        # 合并两部分动作记录
+        actions = list(actions_in_range) + list(action_after_latest)
 
         # 将动作记录转换为消息格式
         for action in actions:
@@ -588,6 +599,7 @@ def build_readable_messages(
         copy_messages.sort(key=lambda x: x.get("time", 0))
 
     if read_mark <= 0:
+        print(f"read_mark: {read_mark}")
         # 没有有效的 read_mark，直接格式化所有消息
         formatted_string, _, pic_id_mapping, _ = _build_readable_messages_internal(
             copy_messages, replace_bot_name, merge_messages, timestamp_mode, truncate
@@ -622,10 +634,13 @@ def build_readable_messages(
             messages_after_mark, replace_bot_name, merge_messages, timestamp_mode, False, pic_id_mapping, pic_counter
         )
 
-        read_mark_line = "\n--- 以上消息是你已经看过---\n--- 请关注以下未读的新消息---\n"
+        read_mark_line = "\n--- 以上消息是你已经看过，请关注以下未读的新消息---\n"
 
         # 生成图片映射信息
-        pic_mapping_info = f"图片信息：\n{build_pic_mapping_info(pic_id_mapping)}\n聊天记录信息：\n"
+        if pic_id_mapping:
+            pic_mapping_info = f"图片信息：\n{build_pic_mapping_info(pic_id_mapping)}\n聊天记录信息：\n"
+        else:
+            pic_mapping_info = "聊天记录信息：\n"
 
         # 组合结果
         result_parts = []

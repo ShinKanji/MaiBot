@@ -14,13 +14,13 @@ Command是直接响应用户明确指令的组件，与Action不同，Command是
 
 ## 🆚 Action vs Command 核心区别
 
-| 特征 | Action | Command |
-|-----|-------|---------|
-| **触发方式** | 麦麦主动决策使用 | 用户主动触发 |
-| **决策机制** | 两层决策（激活+使用） | 直接匹配执行 |
-| **随机性** | 有随机性和智能性 | 确定性执行 |
-| **用途** | 增强麦麦行为拟人化 | 提供具体功能服务 |
-| **性能影响** | 需要LLM决策 | 正则匹配，性能好 |
+| 特征               | Action                | Command          |
+| ------------------ | --------------------- | ---------------- |
+| **触发方式** | 麦麦主动决策使用      | 用户主动触发     |
+| **决策机制** | 两层决策（激活+使用） | 直接匹配执行     |
+| **随机性**   | 有随机性和智能性      | 确定性执行       |
+| **用途**     | 增强麦麦行为拟人化    | 提供具体功能服务 |
+| **性能影响** | 需要LLM决策           | 正则匹配，性能好 |
 
 ## 🏗️ Command基本结构
 
@@ -32,16 +32,16 @@ from src.plugin_system import BaseCommand
 class MyCommand(BaseCommand):
     # 正则表达式匹配模式
     command_pattern = r"^/help\s+(?P<topic>\w+)$"
-    
+  
     # 命令帮助说明
     command_help = "显示指定主题的帮助信息"
-    
+  
     # 使用示例
     command_examples = ["/help action", "/help command"]
-    
+  
     # 是否拦截后续处理
     intercept_message = True
-    
+  
     async def execute(self) -> Tuple[bool, Optional[str]]:
         """执行命令逻辑"""
         # 命令执行逻辑
@@ -50,12 +50,12 @@ class MyCommand(BaseCommand):
 
 ### 属性说明
 
-| 属性 | 类型 | 说明 |
-|-----|------|------|
-| `command_pattern` | str | 正则表达式匹配模式 |
-| `command_help` | str | 命令帮助说明 |
-| `command_examples` | List[str] | 使用示例列表 |
-| `intercept_message` | bool | 是否拦截消息继续处理 |
+| 属性                  | 类型      | 说明                 |
+| --------------------- | --------- | -------------------- |
+| `command_pattern`   | str       | 正则表达式匹配模式   |
+| `command_help`      | str       | 命令帮助说明         |
+| `command_examples`  | List[str] | 使用示例列表         |
+| `intercept_message` | bool      | 是否拦截消息继续处理 |
 
 ## 🔍 正则表达式匹配
 
@@ -65,7 +65,7 @@ class MyCommand(BaseCommand):
 class SimpleCommand(BaseCommand):
     # 匹配 /ping
     command_pattern = r"^/ping$"
-    
+  
     async def execute(self) -> Tuple[bool, Optional[str]]:
         await self.send_text("Pong!")
         return True, "发送了Pong回复"
@@ -73,25 +73,25 @@ class SimpleCommand(BaseCommand):
 
 ### 参数捕获
 
-使用命名组 `(?P<name>pattern)` 捕获参数：
+使用命名组 `(?P<n>pattern)` 捕获参数：
 
 ```python
 class UserCommand(BaseCommand):
     # 匹配 /user add 张三 或 /user del 李四
     command_pattern = r"^/user\s+(?P<action>add|del|info)\s+(?P<username>\w+)$"
-    
+  
     async def execute(self) -> Tuple[bool, Optional[str]]:
         # 通过 self.matched_groups 获取捕获的参数
         action = self.matched_groups.get("action")
         username = self.matched_groups.get("username")
-        
+      
         if action == "add":
             await self.send_text(f"添加用户：{username}")
         elif action == "del":
             await self.send_text(f"删除用户：{username}")
         elif action == "info":
             await self.send_text(f"用户信息：{username}")
-        
+      
         return True, f"执行了{action}操作"
 ```
 
@@ -101,15 +101,15 @@ class UserCommand(BaseCommand):
 class HelpCommand(BaseCommand):
     # 匹配 /help 或 /help topic
     command_pattern = r"^/help(?:\s+(?P<topic>\w+))?$"
-    
+  
     async def execute(self) -> Tuple[bool, Optional[str]]:
         topic = self.matched_groups.get("topic")
-        
+      
         if topic:
             await self.send_text(f"显示{topic}的帮助")
         else:
             await self.send_text("显示总体帮助")
-        
+      
         return True, "显示了帮助信息"
 ```
 
@@ -122,7 +122,7 @@ class AdminCommand(BaseCommand):
     command_pattern = r"^/admin\s+.+"
     command_help = "管理员命令"
     intercept_message = True  # 拦截，不继续处理
-    
+  
     async def execute(self) -> Tuple[bool, Optional[str]]:
         # 执行管理操作
         await self.send_text("执行管理命令")
@@ -137,7 +137,7 @@ class LogCommand(BaseCommand):
     command_pattern = r"^/log\s+.+"
     command_help = "记录日志"
     intercept_message = False  # 不拦截，继续处理
-    
+  
     async def execute(self) -> Tuple[bool, Optional[str]]:
         # 记录日志但不阻止后续处理
         await self.send_text("已记录到日志")
@@ -147,12 +147,12 @@ class LogCommand(BaseCommand):
 
 ### 拦截控制的用途
 
-| 场景 | intercept_message | 说明 |
-|-----|------------------|------|
-| 系统命令 | True | 防止命令被当作普通消息处理 |
-| 查询命令 | True | 直接返回结果，无需后续处理 |
-| 日志命令 | False | 记录但允许消息继续流转 |
-| 监控命令 | False | 监控但不影响正常聊天 |
+| 场景     | intercept_message | 说明                       |
+| -------- | ----------------- | -------------------------- |
+| 系统命令 | True              | 防止命令被当作普通消息处理 |
+| 查询命令 | True              | 直接返回结果，无需后续处理 |
+| 日志命令 | False             | 记录但允许消息继续流转     |
+| 监控命令 | False             | 监控但不影响正常聊天       |
 
 ## 🎨 完整Command示例
 
@@ -261,7 +261,7 @@ class UserManagementCommand(BaseCommand):
 🕒 注册时间: 2024-01-01
 🎯 角色: 普通用户
         """.strip()
-        
+      
         await self.send_text(user_info)
         return True, f"显示用户信息: {username}"
 
@@ -293,10 +293,10 @@ class SystemInfoCommand(BaseCommand):
         try:
             if info_type in ["system", "all"]:
                 await self._show_system_info()
-            
+          
             if info_type in ["memory", "all"]:
                 await self._show_memory_info()
-            
+          
             if info_type in ["plugins", "all"]:
                 await self._show_plugin_info()
 
@@ -317,13 +317,13 @@ class SystemInfoCommand(BaseCommand):
 🐍 Python: {platform.python_version()}
 ⏰ 运行时间: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
         """.strip()
-        
+      
         await self.send_text(system_info)
 
     async def _show_memory_info(self):
         """显示内存信息"""
         import psutil
-        
+      
         memory = psutil.virtual_memory()
         memory_info = f"""
 💾 **内存信息**
@@ -331,25 +331,25 @@ class SystemInfoCommand(BaseCommand):
 🟢 可用内存: {memory.available // (1024**3)} GB  
 📈 使用率: {memory.percent}%
         """.strip()
-        
+      
         await self.send_text(memory_info)
 
     async def _show_plugin_info(self):
         """显示插件信息"""
-        # 通过API获取插件信息
+        # 通过配置获取插件信息
         plugins = await self._get_loaded_plugins()
-        
+      
         plugin_info = f"""
 🔌 **插件信息**
 📦 已加载插件: {len(plugins)}
 🔧 活跃插件: {len([p for p in plugins if p.get('active', False)])}
         """.strip()
-        
+      
         await self.send_text(plugin_info)
 
     async def _get_loaded_plugins(self) -> list:
         """获取已加载的插件列表"""
-        # 这里可以通过self.api获取实际的插件信息
+        # 这里可以通过配置或API获取实际的插件信息
         return [
             {"name": "core_actions", "active": True},
             {"name": "example_plugin", "active": True},
@@ -371,18 +371,18 @@ class CustomPrefixCommand(BaseCommand):
     async def execute(self) -> Tuple[bool, Optional[str]]:
         """执行骰子命令"""
         import random
-        
+      
         command = self.matched_groups.get("command")
         count = int(self.matched_groups.get("count", "6"))
-        
+      
         # 限制骰子面数
         if count > 100:
             await self.send_text("❌ 骰子面数不能超过100")
             return False, "骰子面数超限"
-        
+      
         result = random.randint(1, count)
         await self.send_text(f"🎲 投掷{count}面骰子，结果: {result}")
-        
+      
         return True, f"投掷了{count}面骰子，结果{result}"
 ```
 
@@ -398,82 +398,36 @@ command_pattern = r"^/ping$"
 command_pattern = r"^/(?:ping|pong|test|check|status|info|help|...)"
 
 # ✅ 好的做法 - 分离复杂逻辑
-class PingCommand(BaseCommand):
-    command_pattern = r"^/ping$"
-
-class StatusCommand(BaseCommand):
-    command_pattern = r"^/status$"
 ```
 
 ### 2. 参数验证
 
 ```python
+# ✅ 好的做法 - 早期验证
 async def execute(self) -> Tuple[bool, Optional[str]]:
-    # 快速参数验证
     username = self.matched_groups.get("username")
-    if not username or len(username) < 2:
-        await self.send_text("❌ 用户名不合法")
-        return False, "参数验证失败"
-    
-    # 主要逻辑
-    ...
+    if not username:
+        await self.send_text("❌ 请提供用户名")
+        return False, "缺少参数"
+  
+    # 继续处理...
 ```
 
-### 3. 异常处理
+### 3. 错误处理
 
 ```python
+# ✅ 好的做法 - 完整错误处理
 async def execute(self) -> Tuple[bool, Optional[str]]:
     try:
-        # 命令逻辑
-        result = await self._do_command()
+        # 主要逻辑
+        result = await self._process_command()
         return True, "执行成功"
     except ValueError as e:
         await self.send_text(f"❌ 参数错误: {e}")
         return False, f"参数错误: {e}"
     except Exception as e:
-        logger.error(f"{self.log_prefix} 命令执行失败: {e}")
-        await self.send_text("❌ 命令执行失败")
+        await self.send_text(f"❌ 执行失败: {e}")
         return False, f"执行失败: {e}"
-```
-
-## 🐛 调试技巧
-
-### 1. 正则测试
-
-```python
-import re
-
-pattern = r"^/user\s+(?P<action>add|del)\s+(?P<username>\w+)$"
-test_inputs = [
-    "/user add 张三",
-    "/user del 李四",
-    "/user info 王五",  # 不匹配
-]
-
-for input_text in test_inputs:
-    match = re.match(pattern, input_text)
-    print(f"'{input_text}' -> {match.groupdict() if match else 'No match'}")
-```
-
-### 2. 参数调试
-
-```python
-async def execute(self) -> Tuple[bool, Optional[str]]:
-    # 调试输出
-    logger.debug(f"匹配组: {self.matched_groups}")
-    logger.debug(f"原始消息: {self.message.processed_plain_text}")
-    
-    # 命令逻辑...
-```
-
-### 3. 拦截测试
-
-```python
-# 测试不同的拦截设置
-intercept_message = True   # 测试拦截
-intercept_message = False  # 测试不拦截
-
-# 观察后续Action是否被触发
 ```
 
 ## 🎯 最佳实践
@@ -509,12 +463,12 @@ class WellDocumentedCommand(BaseCommand):
 ```python
 async def execute(self) -> Tuple[bool, Optional[str]]:
     param = self.matched_groups.get("param")
-    
+  
     # 参数验证
     if param not in ["test", "debug", "production"]:
         await self.send_text("❌ 无效的参数，支持: test, debug, production")
         return False, "无效参数"
-    
+  
     # 执行逻辑
     try:
         result = await self._process_param(param)
@@ -530,9 +484,9 @@ async def execute(self) -> Tuple[bool, Optional[str]]:
 ```python
 async def execute(self) -> Tuple[bool, Optional[str]]:
     # 从配置读取设置
-    max_items = self.api.get_config("command.max_items", 10)
-    timeout = self.api.get_config("command.timeout", 30)
-    
+    max_items = self.get_config("command.max_items", 10)
+    timeout = self.get_config("command.timeout", 30)
+  
     # 使用配置进行处理
     ...
 ```
@@ -555,6 +509,4 @@ async def execute(self) -> Tuple[bool, Optional[str]]:
 - ✅ 智能建议和帮助
 - ✅ 随机化的互动
 
----
 
-🎉 **现在你已经掌握了Command组件开发的完整知识！继续学习 [API参考](api/) 来了解所有可用的接口。** 

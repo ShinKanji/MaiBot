@@ -2,7 +2,7 @@ import asyncio
 import time
 from maim_message import MessageServer
 
-from src.chat.focus_chat.expressors.exprssion_learner import get_expression_learner
+from src.chat.express.exprssion_learner import get_expression_learner
 from src.common.remote import TelemetryHeartBeatTask
 from src.manager.async_task_manager import async_task_manager
 from src.chat.utils.statistic import OnlineTimeRecordTask, StatisticOutputTask
@@ -23,6 +23,9 @@ from src.api.main import start_api_server
 
 # 导入新的插件管理器
 from src.plugin_system.core.plugin_manager import plugin_manager
+
+# 导入HFC性能记录器用于日志清理
+from src.chat.focus_chat.hfc_performance_logger import HFCPerformanceLogger
 
 # 导入消息API和traceback模块
 from src.common.message import get_global_api
@@ -67,6 +70,11 @@ class MainSystem:
         """初始化其他组件"""
         init_start_time = time.time()
 
+        # 清理HFC旧日志文件（保持目录大小在50MB以内）
+        logger.info("开始清理HFC旧日志文件...")
+        HFCPerformanceLogger.cleanup_old_logs(max_size_mb=50.0)
+        logger.info("HFC日志清理完成")
+
         # 添加在线时间统计任务
         await async_task_manager.add_task(OnlineTimeRecordTask())
 
@@ -93,12 +101,19 @@ class MainSystem:
         # 添加情绪打印任务
         await async_task_manager.add_task(MoodPrintTask())
 
+        logger.info("情绪管理器初始化成功")
+
         # 启动愿望管理器
         await willing_manager.async_task_starter()
 
+        logger.info("willing管理器初始化成功")
+
         # 初始化聊天管理器
+
         await get_chat_manager()._initialize()
         asyncio.create_task(get_chat_manager()._auto_save_task())
+
+        logger.info("聊天管理器初始化成功")
 
         # 根据配置条件性地初始化记忆系统
         if global_config.memory.enable_memory:

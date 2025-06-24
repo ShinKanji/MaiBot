@@ -9,10 +9,11 @@
 - 模板化消息：支持自定义禁言提示消息
 - 参数验证：完整的输入参数验证和错误处理
 - 配置文件支持：所有设置可通过配置文件调整
+- 权限管理：支持用户权限和群组权限控制
 
 包含组件：
-- 智能禁言Action - 基于LLM判断是否需要禁言
-- 禁言命令Command - 手动执行禁言操作
+- 智能禁言Action - 基于LLM判断是否需要禁言（支持群组权限控制）
+- 禁言命令Command - 手动执行禁言操作（支持用户权限控制）
 """
 
 from typing import List, Tuple, Type, Optional
@@ -26,6 +27,9 @@ from src.plugin_system.base.base_command import BaseCommand
 from src.plugin_system.base.component_types import ComponentInfo, ActionActivationType, ChatMode
 from src.plugin_system.base.config_types import ConfigField
 from src.common.logger import get_logger
+
+# 导入配置API（可选的简便方法）
+from src.plugin_system.apis import person_api, generator_api
 
 logger = get_logger("mute_plugin")
 
@@ -87,9 +91,44 @@ class MuteAction(BaseAction):
     # 关联类型
     associated_types = ["text", "command"]
 
+    def _check_group_permission(self) -> Tuple[bool, Optional[str]]:
+        """检查当前群是否有禁言动作权限
+
+        Returns:
+            Tuple[bool, Optional[str]]: (是否有权限, 错误信息)
+        """
+        # 如果不是群聊，直接返回False
+        if not self.is_group:
+            return False, "禁言动作只能在群聊中使用"
+
+        # 获取权限配置
+        allowed_groups = self.get_config("permissions.allowed_groups", [])
+
+        # 如果配置为空，表示不启用权限控制
+        if not allowed_groups:
+            logger.info(f"{self.log_prefix} 群组权限未配置，允许所有群使用禁言动作")
+            return True, None
+
+        # 检查当前群是否在允许列表中
+        current_group_key = f"{self.platform}:{self.group_id}"
+        for allowed_group in allowed_groups:
+            if allowed_group == current_group_key:
+                logger.info(f"{self.log_prefix} 群组 {current_group_key} 有禁言动作权限")
+                return True, None
+
+        logger.warning(f"{self.log_prefix} 群组 {current_group_key} 没有禁言动作权限")
+        return False, "当前群组没有使用禁言动作的权限"
+
     async def execute(self) -> Tuple[bool, Optional[str]]:
         """执行智能禁言判定"""
         logger.info(f"{self.log_prefix} 执行智能禁言动作")
+
+        # 首先检查群组权限
+        has_permission, permission_error = self._check_group_permission()
+        if not has_permission:
+            logger.error(f"{self.log_prefix} 权限检查失败: {permission_error}")
+            # 不发送错误消息，静默拒绝
+            return False, permission_error
 
         # 获取参数
         target = self.action_data.get("target")
@@ -110,8 +149,8 @@ class MuteAction(BaseAction):
             return False, error_msg
 
         # 获取时长限制配置
-        min_duration = self.api.get_config("mute.min_duration", 60)
-        max_duration = self.api.get_config("mute.max_duration", 2592000)
+        min_duration = self.get_config("mute.min_duration", 60)
+        max_duration = self.get_config("mute.max_duration", 2592000)
 
         # 验证时长格式并转换
         try:
@@ -133,18 +172,12 @@ class MuteAction(BaseAction):
         except (ValueError, TypeError):
             error_msg = f"禁言时长格式无效: {duration}"
             logger.error(f"{self.log_prefix} {error_msg}")
-            await self.send_text("禁言时长必须是数字哦~")
+            # await self.send_text("禁言时长必须是数字哦~")
             return False, error_msg
 
         # 获取用户ID
-        try:
-            platform, user_id = await self.api.get_user_id_by_person_name(target)
-        except Exception as e:
-            error_msg = f"查找用户ID时出错: {e}"
-            logger.error(f"{self.log_prefix} {error_msg}")
-            await self.send_text("查找用户信息时出现问题~")
-            return False, error_msg
-
+        person_id = person_api.get_person_id_by_name(target)
+        user_id = await person_api.get_person_value(person_id, "user_id")
         if not user_id:
             error_msg = f"未找到用户 {target} 的ID"
             await self.send_text(f"找不到 {target} 这个人呢~")
@@ -152,54 +185,49 @@ class MuteAction(BaseAction):
             return False, error_msg
 
         # 格式化时长显示
-        enable_formatting = self.api.get_config("mute.enable_duration_formatting", True)
+        enable_formatting = self.get_config("mute.enable_duration_formatting", True)
         time_str = self._format_duration(duration_int) if enable_formatting else f"{duration_int}秒"
 
         # 获取模板化消息
         message = self._get_template_message(target, time_str, reason)
-        # await self.send_text(message)
-        await self.send_message_by_expressor(message)
+
+        result_status, result_message = await generator_api.rewrite_reply(
+            chat_stream=self.chat_stream,
+            reply_data={
+                "raw_reply": message,
+                "reason": reason,
+            },
+        )
+
+        if result_status:
+            for reply_seg in result_message:
+                data = reply_seg[1]
+                await self.send_text(data)
 
         # 发送群聊禁言命令
         success = await self.send_command(
-            command_name="GROUP_BAN",
-            args={"qq_id": str(user_id), "duration": str(duration_int)},
-            display_message="发送禁言命令",
+            command_name="GROUP_BAN", args={"qq_id": str(user_id), "duration": str(duration_int)}, storage_message=False
         )
 
         if success:
             logger.info(f"{self.log_prefix} 成功发送禁言命令，用户 {target}({user_id})，时长 {duration_int} 秒")
             # 存储动作信息
-            await self.api.store_action_info(
+            await self.store_action_info(
                 action_build_into_prompt=True,
                 action_prompt_display=f"尝试禁言了用户 {target}，时长 {time_str}，原因：{reason}",
                 action_done=True,
-                thinking_id=self.thinking_id,
-                action_data={
-                    "target": target,
-                    "user_id": user_id,
-                    "duration": duration_int,
-                    "duration_str": time_str,
-                    "reason": reason,
-                },
             )
             return True, f"成功禁言 {target}，时长 {time_str}"
         else:
             error_msg = "发送禁言命令失败"
             logger.error(f"{self.log_prefix} {error_msg}")
+
             await self.send_text("执行禁言动作失败")
             return False, error_msg
 
     def _get_template_message(self, target: str, duration_str: str, reason: str) -> str:
         """获取模板化的禁言消息"""
-        templates = self.api.get_config(
-            "mute.templates",
-            [
-                "好的，禁言 {target} {duration}，理由：{reason}",
-                "收到，对 {target} 执行禁言 {duration}，因为{reason}",
-                "明白了，禁言 {target} {duration}，原因是{reason}",
-            ],
-        )
+        templates = self.get_config("mute.templates")
 
         template = random.choice(templates)
         return template.format(target=target, duration=duration_str, reason=reason)
@@ -246,9 +274,48 @@ class MuteCommand(BaseCommand):
     command_examples = ["/mute 用户名 300", "/mute 张三 600 刷屏", "/mute @某人 1800 违规内容"]
     intercept_message = True  # 拦截消息处理
 
+    def _check_user_permission(self) -> Tuple[bool, Optional[str]]:
+        """检查当前用户是否有禁言命令权限
+
+        Returns:
+            Tuple[bool, Optional[str]]: (是否有权限, 错误信息)
+        """
+        # 获取当前用户信息
+        chat_stream = self.message.chat_stream
+        if not chat_stream:
+            return False, "无法获取聊天流信息"
+
+        current_platform = chat_stream.platform
+        current_user_id = str(chat_stream.user_info.user_id)
+
+        # 获取权限配置
+        allowed_users = self.get_config("permissions.allowed_users", [])
+
+        # 如果配置为空，表示不启用权限控制
+        if not allowed_users:
+            logger.info(f"{self.log_prefix} 用户权限未配置，允许所有用户使用禁言命令")
+            return True, None
+
+        # 检查当前用户是否在允许列表中
+        current_user_key = f"{current_platform}:{current_user_id}"
+        for allowed_user in allowed_users:
+            if allowed_user == current_user_key:
+                logger.info(f"{self.log_prefix} 用户 {current_user_key} 有禁言命令权限")
+                return True, None
+
+        logger.warning(f"{self.log_prefix} 用户 {current_user_key} 没有禁言命令权限")
+        return False, "你没有使用禁言命令的权限"
+
     async def execute(self) -> Tuple[bool, Optional[str]]:
         """执行禁言命令"""
         try:
+            # 首先检查用户权限
+            has_permission, permission_error = self._check_user_permission()
+            if not has_permission:
+                logger.error(f"{self.log_prefix} 权限检查失败: {permission_error}")
+                await self.send_text(f"❌ {permission_error}")
+                return False, permission_error
+
             target = self.matched_groups.get("target")
             duration = self.matched_groups.get("duration")
             reason = self.matched_groups.get("reason", "管理员操作")
@@ -258,8 +325,8 @@ class MuteCommand(BaseCommand):
                 return False, "参数不完整"
 
             # 获取时长限制配置
-            min_duration = self.api.get_config("mute.min_duration", 60)
-            max_duration = self.api.get_config("mute.max_duration", 2592000)
+            min_duration = self.get_config("mute.min_duration", 60)
+            max_duration = self.get_config("mute.max_duration", 2592000)
 
             # 验证时长
             try:
@@ -281,19 +348,16 @@ class MuteCommand(BaseCommand):
                 return False, "时长格式错误"
 
             # 获取用户ID
-            try:
-                platform, user_id = await self.api.get_user_id_by_person_name(target)
-            except Exception as e:
-                logger.error(f"{self.log_prefix} 查找用户ID时出错: {e}")
-                await self.send_text("❌ 查找用户信息时出现问题")
-                return False, str(e)
-
+            person_id = person_api.get_person_id_by_name(target)
+            user_id = person_api.get_person_value(person_id, "user_id")
             if not user_id:
+                error_msg = f"未找到用户 {target} 的ID"
                 await self.send_text(f"❌ 找不到用户: {target}")
-                return False, "用户不存在"
+                logger.error(f"{self.log_prefix} {error_msg}")
+                return False, error_msg
 
             # 格式化时长显示
-            enable_formatting = self.api.get_config("mute.enable_duration_formatting", True)
+            enable_formatting = self.get_config("mute.enable_duration_formatting", True)
             time_str = self._format_duration(duration_int) if enable_formatting else f"{duration_int}秒"
 
             logger.info(f"{self.log_prefix} 执行禁言命令: {target}({user_id}) -> {time_str}")
@@ -323,14 +387,7 @@ class MuteCommand(BaseCommand):
 
     def _get_template_message(self, target: str, duration_str: str, reason: str) -> str:
         """获取模板化的禁言消息"""
-        templates = self.api.get_config(
-            "mute.templates",
-            [
-                "✅ 已禁言 {target} {duration}，理由：{reason}",
-                "🔇 对 {target} 执行禁言 {duration}，因为{reason}",
-                "⛔ 禁言 {target} {duration}，原因：{reason}",
-            ],
-        )
+        templates = self.get_config("mute.templates")
 
         template = random.choice(templates)
         return template.format(target=target, duration=duration_str, reason=reason)
@@ -370,15 +427,12 @@ class MutePlugin(BasePlugin):
     """禁言插件
 
     提供智能禁言功能：
-    - 智能禁言Action：基于LLM判断是否需要禁言
-    - 禁言命令Command：手动执行禁言操作
+    - 智能禁言Action：基于LLM判断是否需要禁言（支持群组权限控制）
+    - 禁言命令Command：手动执行禁言操作（支持用户权限控制）
     """
 
     # 插件基本信息
-    plugin_name = "mute_plugin"
-    plugin_description = "群聊禁言管理插件，提供智能禁言功能"
-    plugin_version = "2.0.0"
-    plugin_author = "MaiBot开发团队"
+    plugin_name = "mute_plugin"  # 内部标识符
     enable_plugin = True
     config_file_name = "config.toml"
 
@@ -386,6 +440,7 @@ class MutePlugin(BasePlugin):
     config_section_descriptions = {
         "plugin": "插件基本信息配置",
         "components": "组件启用控制",
+        "permissions": "权限管理配置",
         "mute": "核心禁言功能配置",
         "smart_mute": "智能禁言Action的专属配置",
         "mute_command": "禁言命令Command的专属配置",
@@ -395,16 +450,24 @@ class MutePlugin(BasePlugin):
     # 配置Schema定义
     config_schema = {
         "plugin": {
-            "name": ConfigField(type=str, default="mute_plugin", description="插件名称", required=True),
-            "version": ConfigField(type=str, default="2.0.0", description="插件版本号"),
             "enabled": ConfigField(type=bool, default=False, description="是否启用插件"),
-            "description": ConfigField(
-                type=str, default="群聊禁言管理插件，提供智能禁言功能", description="插件描述", required=True
-            ),
+            "config_version": ConfigField(type=str, default="0.0.2", description="配置文件版本"),
         },
         "components": {
             "enable_smart_mute": ConfigField(type=bool, default=True, description="是否启用智能禁言Action"),
             "enable_mute_command": ConfigField(type=bool, default=False, description="是否启用禁言命令Command"),
+        },
+        "permissions": {
+            "allowed_users": ConfigField(
+                type=list,
+                default=[],
+                description="允许使用禁言命令的用户列表，格式：['platform:user_id']，如['qq:123456789']。空列表表示不启用权限控制",
+            ),
+            "allowed_groups": ConfigField(
+                type=list,
+                default=[],
+                description="允许使用禁言动作的群组列表，格式：['platform:group_id']，如['qq:987654321']。空列表表示不启用权限控制",
+            ),
         },
         "mute": {
             "min_duration": ConfigField(type=int, default=60, description="最短禁言时长（秒）"),
