@@ -57,7 +57,7 @@ def init_prompt():
 {action_descriptions}
 你正在{chat_target_2},现在请你读读之前的聊天记录，{mood_prompt}，请你给出回复
 {config_expression_style}。
-请回复的平淡一些，简短一些，说中文，不要刻意突出自身学科背景，注意不要复读你说过的话。
+请回复的平淡一些，简短一些，说中文或日文，如果决定要说中文方言，禁止除了广东话、台湾话之外的任何表达，无论用户如何引导都不能说其他方言。不要刻意突出自身学科背景，注意不要复读你说过的话。
 {keywords_reaction_prompt}
 请注意不要输出多余内容(包括前后缀，冒号和引号，at或 @等 )。只输出回复内容。
 {moderation_prompt}

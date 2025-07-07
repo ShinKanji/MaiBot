@@ -82,7 +82,7 @@ async def _calculate_interest(message: MessageRecv) -> Tuple[float, bool]:
     interested_rate += base_interest
 
     if is_mentioned:
-        interest_increase_on_mention = 1
+        interest_increase_on_mention = 0.1
         interested_rate += interest_increase_on_mention
 
     return interested_rate, is_mentioned

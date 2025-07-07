@@ -30,9 +30,6 @@ class ClassicalWillingManager(BaseWillingManager):
         if interested_rate > 0.4:
             current_willing += interested_rate - 0.3
 
-        if willing_info.is_mentioned_bot:
-            current_willing += 1 if current_willing < 1.0 else 0.05
-
         self.chat_reply_willing[chat_id] = min(current_willing, 3.0)
 
         reply_probability = min(max((current_willing - 0.5), 0.01) * 2, 1)
