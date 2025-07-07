@@ -75,6 +75,18 @@ class ChatConfig(ConfigBase):
     chat_mode: str = "normal"
     """聊天模式"""
 
+    max_context_size: int = 18
+    """上下文长度"""
+
+    replyer_random_probability: float = 0.5
+    """
+    发言时选择推理模型的概率（0-1之间）
+    选择普通模型的概率为 1 - reasoning_normal_model_probability
+    """
+
+    thinking_timeout: int = 30
+    """麦麦最长思考规划时间，超过这个时间的思考会放弃（往往是api反应太慢）"""
+
     talk_frequency: float = 1
     """回复频率阈值"""
 
@@ -261,32 +273,11 @@ class MessageReceiveConfig(ConfigBase):
 class NormalChatConfig(ConfigBase):
     """普通聊天配置类"""
 
-    normal_chat_first_probability: float = 0.3
-    """
-    发言时选择推理模型的概率（0-1之间）
-    选择普通模型的概率为 1 - reasoning_normal_model_probability
-    """
-
-    max_context_size: int = 15
-    """上下文长度"""
-
-    message_buffer: bool = False
-    """消息缓冲器"""
-
-    emoji_chance: float = 0.2
-    """发送表情包的基础概率"""
-
-    thinking_timeout: int = 120
-    """最长思考时间"""
-
     willing_mode: str = "classical"
     """意愿模式"""
 
     response_interested_rate_amplifier: float = 1.0
     """回复兴趣度放大系数"""
-
-    emoji_response_penalty: float = 0.0
-    """表情包回复惩罚系数"""
 
     mentioned_bot_inevitable_reply: bool = False
     """提及 bot 必然回复"""
@@ -302,48 +293,19 @@ class NormalChatConfig(ConfigBase):
 class FocusChatConfig(ConfigBase):
     """专注聊天配置类"""
 
-    observation_context_size: int = 20
-    """可观察到的最长上下文大小，超过这个值的上下文会被压缩"""
-
-    compressed_length: int = 5
-    """心流上下文压缩的最短压缩长度，超过心流观察到的上下文长度，会压缩，最短压缩长度为5"""
-
-    compress_length_limit: int = 5
-    """最多压缩份数，超过该数值的压缩上下文会被删除"""
-
     think_interval: float = 1
     """思考间隔（秒）"""
 
     consecutive_replies: float = 1
     """连续回复能力，值越高，麦麦连续回复的概率越高"""
 
-    parallel_processing: bool = False
-    """是否允许处理器阶段和回忆阶段并行执行"""
-
-    processor_max_time: int = 25
-    """处理器最大时间，单位秒，如果超过这个时间，处理器会自动停止"""
-
-
-@dataclass
-class FocusChatProcessorConfig(ConfigBase):
-    """专注聊天处理器配置类"""
-
-    person_impression_processor: bool = True
-    """是否启用关系识别处理器"""
-
-    tool_use_processor: bool = True
-    """是否启用工具使用处理器"""
-
-    working_memory_processor: bool = True
-    """是否启用工作记忆处理器"""
-
-    expression_selector_processor: bool = True
-    """是否启用表达方式选择处理器"""
-
 
 @dataclass
 class ExpressionConfig(ConfigBase):
     """表达配置类"""
+
+    enable_expression: bool = True
+    """是否启用表达方式"""
 
     expression_style: str = ""
     """表达风格"""
@@ -362,8 +324,25 @@ class ExpressionConfig(ConfigBase):
 
 
 @dataclass
+class ToolConfig(ConfigBase):
+    """工具配置类"""
+
+    enable_in_normal_chat: bool = False
+    """是否在普通聊天中启用工具"""
+
+    enable_in_focus_chat: bool = True
+    """是否在专注聊天中启用工具"""
+
+
+@dataclass
 class EmojiConfig(ConfigBase):
     """表情包配置类"""
+
+    emoji_chance: float = 0.6
+    """发送表情包的基础概率"""
+
+    emoji_activate_type: str = "random"
+    """表情包激活类型，可选：random，llm，random下，表情包动作随机启用，llm下，表情包动作根据llm判断是否启用"""
 
     max_reg_num: int = 200
     """表情包最大注册数量"""
@@ -437,6 +416,9 @@ class MemoryConfig(ConfigBase):
 @dataclass
 class MoodConfig(ConfigBase):
     """情绪配置类"""
+
+    enable_mood: bool = False
+    """是否启用情绪系统"""
 
     mood_update_interval: int = 1
     """情绪更新间隔（秒）"""
@@ -549,11 +531,19 @@ class TelemetryConfig(ConfigBase):
 
 
 @dataclass
-class ExperimentalConfig(ConfigBase):
-    """实验功能配置类"""
+class DebugConfig(ConfigBase):
+    """调试配置类"""
 
     debug_show_chat_mode: bool = False
     """是否在回复后显示当前聊天模式"""
+
+    show_prompt: bool = False
+    """是否显示prompt"""
+
+
+@dataclass
+class ExperimentalConfig(ConfigBase):
+    """实验功能配置类"""
 
     enable_friend_chat: bool = False
     """是否启用好友聊天"""
@@ -656,7 +646,7 @@ class ModelConfig(ConfigBase):
     focus_working_memory: dict[str, Any] = field(default_factory=lambda: {})
     """专注工作记忆模型配置"""
 
-    focus_tool_use: dict[str, Any] = field(default_factory=lambda: {})
+    tool_use: dict[str, Any] = field(default_factory=lambda: {})
     """专注工具使用模型配置"""
 
     planner: dict[str, Any] = field(default_factory=lambda: {})
