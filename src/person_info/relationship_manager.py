@@ -127,7 +127,14 @@ class RelationshipManager:
 
         nickname_str = await person_info_manager.get_value(person_id, "nickname")
         platform = await person_info_manager.get_value(person_id, "platform")
-        relation_prompt = f"'{person_name}' ，ta在{platform}上的昵称是{nickname_str}。"
+
+        if person_name == nickname_str and not short_impression:
+            return ""
+
+        if person_name == nickname_str:
+            relation_prompt = f"'{person_name}' :"
+        else:
+            relation_prompt = f"'{person_name}' ，ta在{platform}上的昵称是{nickname_str}。"
 
         if short_impression:
             relation_prompt += f"你对ta的印象是：{short_impression}。"
@@ -500,20 +507,25 @@ class RelationshipManager:
                     new_familiarity_value = int(relation_value_json.get("familiarity_value", 0))
                     new_liking_value = int(relation_value_json.get("liking_value", 50))
 
+                    # 获取当前的关系值
+                    old_familiarity_value = await person_info_manager.get_value(person_id, "familiarity_value") or 0
+                    liking_value = await person_info_manager.get_value(person_id, "liking_value") or 50
+
+                    # 更新熟悉度
                     if new_familiarity_value > 25:
-                        old_familiarity_value = await person_info_manager.get_value(person_id, "familiarity_value") or 0
-                        old_familiarity_value += new_familiarity_value - 25 / 75
+                        familiarity_value = old_familiarity_value + (new_familiarity_value - 25) / 75
+                    else:
+                        familiarity_value = old_familiarity_value
 
+                    # 更新好感度
                     if new_liking_value > 50:
-                        liking_value = await person_info_manager.get_value(person_id, "liking_value") or 50
-                        liking_value += new_liking_value - 50 / 50
-                    if new_liking_value < 50:
-                        liking_value = await person_info_manager.get_value(person_id, "liking_value") or 50
-                        liking_value -= (50 - new_liking_value / 50) * 1.5
+                        liking_value += (new_liking_value - 50) / 50
+                    elif new_liking_value < 50:
+                        liking_value -= (50 - new_liking_value) / 50 * 1.5
 
-                    await person_info_manager.update_one_field(person_id, "familiarity_value", liking_value)
+                    await person_info_manager.update_one_field(person_id, "familiarity_value", familiarity_value)
                     await person_info_manager.update_one_field(person_id, "liking_value", liking_value)
-                    logger.info(f"更新了与 {person_name} 的关系值: 熟悉度={liking_value}, 好感度={liking_value}")
+                    logger.info(f"更新了与 {person_name} 的关系值: 熟悉度={familiarity_value}, 好感度={liking_value}")
                 except (json.JSONDecodeError, ValueError, TypeError) as e:
                     logger.error(f"解析relation_value JSON失败或值无效: {e}, 响应: {relation_value_response}")
 

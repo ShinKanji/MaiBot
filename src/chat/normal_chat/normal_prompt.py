@@ -1,7 +1,5 @@
-from src.chat.express.exprssion_learner import get_expression_learner
 from src.config.config import global_config
 from src.common.logger import get_logger
-from src.individuality.individuality import get_individuality
 from src.chat.utils.prompt_builder import Prompt, global_prompt_manager
 from src.chat.utils.chat_message_builder import build_readable_messages, get_raw_msg_before_timestamp_with_chat
 import time
@@ -10,7 +8,10 @@ from src.manager.mood_manager import mood_manager
 from src.chat.memory_system.Hippocampus import hippocampus_manager
 from src.chat.knowledge.knowledge_lib import qa_manager
 import random
+from src.person_info.person_info import get_person_info_manager
+from src.chat.express.expression_selector import expression_selector
 import re
+import ast
 
 from src.person_info.relationship_manager import get_relationship_manager
 
@@ -27,7 +28,7 @@ def init_prompt():
         """
 你可以参考以下的语言习惯，如果情景合适就使用，不要盲目使用,不要生硬使用，而是结合到表达中：
 {style_habbits}
-请你根据情景使用以下句法，不要盲目使用,不要生硬使用，而是结合到表达中：
+请你根据情景使用以下，不要盲目使用,不要生硬使用，而是结合到表达中：
 {grammar_habbits}
 
 {memory_prompt}
@@ -91,7 +92,31 @@ class PromptBuilder:
         enable_planner: bool = False,
         available_actions=None,
     ) -> str:
-        prompt_personality = get_individuality().get_prompt(x_person=2, level=2)
+        person_info_manager = get_person_info_manager()
+        bot_person_id = person_info_manager.get_person_id("system", "bot_id")
+
+        short_impression = await person_info_manager.get_value(bot_person_id, "short_impression")
+
+        # 解析字符串形式的Python列表
+        try:
+            if isinstance(short_impression, str) and short_impression.strip():
+                short_impression = ast.literal_eval(short_impression)
+            elif not short_impression:
+                logger.warning("short_impression为空，使用默认值")
+                short_impression = ["友好活泼", "人类"]
+        except (ValueError, SyntaxError) as e:
+            logger.error(f"解析short_impression失败: {e}, 原始值: {short_impression}")
+            short_impression = ["友好活泼", "人类"]
+
+        # 确保short_impression是列表格式且有足够的元素
+        if not isinstance(short_impression, list) or len(short_impression) < 2:
+            logger.warning(f"short_impression格式不正确: {short_impression}, 使用默认值")
+            short_impression = ["友好活泼", "人类"]
+
+        personality = short_impression[0]
+        identity = short_impression[1]
+        prompt_personality = personality + "，" + identity
+
         is_group_chat = bool(chat_stream.group_info)
 
         who_chat_in_group = []
@@ -101,52 +126,19 @@ class PromptBuilder:
                 (chat_stream.user_info.platform, chat_stream.user_info.user_id) if chat_stream.user_info else None,
                 limit=global_config.normal_chat.max_context_size,
             )
-        elif chat_stream.user_info:
-            who_chat_in_group.append(
-                (chat_stream.user_info.platform, chat_stream.user_info.user_id, chat_stream.user_info.user_nickname)
-            )
+        who_chat_in_group.append(
+            (chat_stream.user_info.platform, chat_stream.user_info.user_id, chat_stream.user_info.user_nickname)
+        )
 
         relation_prompt = ""
         if global_config.relationship.enable_relationship:
             for person in who_chat_in_group:
                 relationship_manager = get_relationship_manager()
-                relation_prompt += await relationship_manager.build_relationship_info(person)
+                relation_prompt += f"{await relationship_manager.build_relationship_info(person)}\n"
 
         mood_prompt = mood_manager.get_mood_prompt()
-        expression_learner = get_expression_learner()
-        (
-            learnt_style_expressions,
-            learnt_grammar_expressions,
-            personality_expressions,
-        ) = await expression_learner.get_expression_by_chat_id(chat_stream.stream_id)
-
-        style_habbits = []
-        grammar_habbits = []
-        # 1. learnt_expressions加权随机选2条
-        if learnt_style_expressions:
-            weights = [expr["count"] for expr in learnt_style_expressions]
-            selected_learnt = weighted_sample_no_replacement(learnt_style_expressions, weights, 2)
-            for expr in selected_learnt:
-                if isinstance(expr, dict) and "situation" in expr and "style" in expr:
-                    style_habbits.append(f"当{expr['situation']}时，使用 {expr['style']}")
-        # 2. learnt_grammar_expressions加权随机选2条
-        if learnt_grammar_expressions:
-            weights = [expr["count"] for expr in learnt_grammar_expressions]
-            selected_learnt = weighted_sample_no_replacement(learnt_grammar_expressions, weights, 2)
-            for expr in selected_learnt:
-                if isinstance(expr, dict) and "situation" in expr and "style" in expr:
-                    grammar_habbits.append(f"当{expr['situation']}时，使用 {expr['style']}")
-        # 3. personality_expressions随机选1条
-        if personality_expressions:
-            expr = random.choice(personality_expressions)
-            if isinstance(expr, dict) and "situation" in expr and "style" in expr:
-                style_habbits.append(f"当{expr['situation']}时，使用 {expr['style']}")
-
-        style_habbits_str = "\n".join(style_habbits)
-        grammar_habbits_str = "\n".join(grammar_habbits)
 
         memory_prompt = ""
-
         if global_config.memory.enable_memory:
             related_memory = await hippocampus_manager.get_memory_from_text(
                 text=message_txt, max_memory_num=2, max_memory_length=2, max_depth=3, fast_retrieval=False
@@ -173,6 +165,39 @@ class PromptBuilder:
             read_mark=0.0,
             show_actions=True,
         )
+
+        message_list_before_now_half = get_raw_msg_before_timestamp_with_chat(
+            chat_id=chat_stream.stream_id,
+            timestamp=time.time(),
+            limit=int(global_config.focus_chat.observation_context_size * 0.5),
+        )
+        chat_talking_prompt_half = build_readable_messages(
+            message_list_before_now_half,
+            replace_bot_name=True,
+            merge_messages=False,
+            timestamp_mode="relative",
+            read_mark=0.0,
+            show_actions=True,
+        )
+
+        expressions = await expression_selector.select_suitable_expressions_llm(
+            chat_stream.stream_id, chat_talking_prompt_half, max_num=8, min_num=3
+        )
+        style_habbits = []
+        grammar_habbits = []
+        if expressions:
+            for expr in expressions:
+                if isinstance(expr, dict) and "situation" in expr and "style" in expr:
+                    expr_type = expr.get("type", "style")
+                    if expr_type == "grammar":
+                        grammar_habbits.append(f"当{expr['situation']}时，使用 {expr['style']}")
+                    else:
+                        style_habbits.append(f"当{expr['situation']}时，使用 {expr['style']}")
+        else:
+            logger.debug("没有从处理器获得表达方式，将使用空的表达方式")
+
+        style_habbits_str = "\n".join(style_habbits)
+        grammar_habbits_str = "\n".join(grammar_habbits)
 
         # 关键词检测与反应
         keywords_reaction_prompt = ""
